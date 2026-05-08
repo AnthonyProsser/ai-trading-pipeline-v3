@@ -1,107 +1,123 @@
-# CLAUDE.md — Claude Code orientation
+# CLAUDE.md
 
-## 1. Project identity
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Solo paper-trading BTC bot. Three components: **Predictor** (PatchTST on 1,440 1-min candles → quantile multi-step forecast), **Trader** (rules-based, uncertainty-aware sizing, exchange-native stops), **Dashboard** (FastAPI + vanilla JS, read-only telemetry plus kill-switch button). Single RTX 4060 8GB. Single user, Windows. **No real capital until paper-trading gates pass and statistical edge is proven by permutation test.** v2 stalled in predictor training because three AIs coordinated badly across drifting docs; v3's defense is single AI (this one) + adversarial human review + filesystem-as-state. The five v3 directives below exist because v2 had five fatal flaws that the constitution forgot.
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions below.
 
-## 2. What to read first (every session, in this order)
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
-1. `DECISIONS.md` — locked architectural decisions; key→value
-2. `INDEX.md` — task→files lookup; never speculatively load context cards
-3. The 1–3 context cards `INDEX.md` names for the current task
+## 1. Think Before Coding
 
-**Do not load `docs/archive/old_project.md` in coding sessions.** It is v2 history and contains decisions superseded by `DECISIONS.md`. Loading it costs ~6,500 tokens and creates drift.
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
 
-Per-session orientation budget: 8–11KB before touching code. If you find yourself loading >3 files, stop and re-read the task definition — either the cards are too granular or the task is too coarse.
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
 
-## 3. Non-negotiable rules
+## 2. Simplicity First
 
-- **Tests first.** Write failing tests encoding the exit criteria, commit them, then implement. The `test-enforcer` subagent verifies git log order at phase exit.
-- **Magic numbers live in `constants.py` only.** Inside their frozen dataclass. No bare module-level constants in `src/`. No hardcoded thresholds in `if x > 0.62:` form — that is a bug.
-- **`src/` never imports from `scripts/`.** Scripts call into `src/`, never the inverse. Enforced by CI.
-- **`data/test_locked/` never referenced from `src/`.** Enforced by `grep -r 'test_locked' src/` in CI plus a `sys.settrace` runtime guard during training.
-- **One branch per phase.** `phase-XY` off `developer`; `developer` → `main` at phase exit. Never commit to `main` directly.
-- **Flag every unspecced decision.** If a task requires a value not in `DECISIONS.md` or `constants.py`, stop and ask. Do not guess, do not "use a reasonable default."
-- **`asyncio` only in execution.** Predictor and trader code stays synchronous; the event loop lives in `src/execution/`.
-- **SHA256 anchor verified on every weight read.** Manifest covers weights + scaler PKL + `constants.py`. A one-line constants change otherwise silently rewrites reward/risk shape post-training.
-- **Exchange-native stop-loss is mandatory.** The execution engine refuses any order whose attached stop-loss cannot be placed at Kraken. No naked positions on the book under any code path.
-- **All timestamps are UTC.** `datetime.now()` without `tz=timezone.utc` is a CI failure in `src/`.
-- **Any `DECISIONS.md` change requires a `CHANGELOG.md` entry in the same commit.** Pre-merge check enforces.
+**Minimum code that solves the problem. Nothing speculative.**
 
-## 4. The five v3 directives
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
 
-1. **Direct multi-step quantile forecasting.** Autoregressive iteration is banned; PatchTST encoder outputs q10/q50/q90 per OHLCV dim for 15 steps directly.
-2. **Uncertainty-aware trading.** Quantile spread `(q90-q10)/|q50|` continuously scales position size — widening uncertainty automatically reduces exposure.
-3. **Hardware-level OS isolation.** File-flag kill switch + dedicated watchdog process + exchange-native stops. Capital safety never depends on the dashboard.
-4. **Forward-only processing.** Per-fold `MinMaxScaler` with strict fit-window assertion. Rolling features computed sequentially before the scaler updates. Leakage tests written before pipeline code.
-5. **Rigorous statistical validation.** Null-hypothesis permutation test (p < 0.05) against random buy/sell signals at the bot's actual trade frequency, before any live capital. Sharpe and win rate are monitoring, not the gate.
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
-## 5. Workflow per phase
+## 3. Surgical Changes
 
-1. **Plan.** Re-read `DECISIONS.md` plus the relevant context card(s). Write the phase exit criteria into a markdown plan file.
-2. **Branch + tests-first.** `git checkout -b phase-XY developer`. Create failing tests under `tests/{mirror}/` that encode the exit criteria. Commit them.
-3. **Implement + summarize.** Make tests pass. End the session with a 5-bullet summary that explicitly flags any unspecced decision encountered.
-4. **Review diff + approve.** User reviews the diff against `DECISIONS.md`; the `decisions-auditor` subagent validates constants/formulas first.
-5. **Log.** Append a session-log entry under `docs/sessions/`. Merge phase branch → `developer` only after tests green and audit passes.
+**Touch only what you must. Clean up only your own mess.**
 
-The `phase-workflow` skill produces (1)–(2)–(5) automatically.
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
 
-## 6. Skills
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
 
-- `phase-workflow` — branch + failing-tests + session-log scaffolding
-- `add-predictor-feature` — feature pipeline + scaler + leakage test + observation-space note
-- `run-backtest` — vectorized backtest, timestamped result file, W&B run, Sortino gate pass/fail
-- `check-leakage` — per-fold scaler audit + `grep -r test_locked src/` + leakage regression
-- `deploy-predictor` — SHA256 verify, walk-forward 12×1w gate, three retrain gates (coverage ±5%, DA > 53.5%, Cal 75–85%); HARD STOP on any failure
-- `write-test-first` — failing tests file mirroring `src/` path, encoding exit criteria
-- `run-baseline-check` — momentum/mean-reversion/breakout baselines vs. 52% DA threshold (build-order item 0)
-- `run-chaos-test` — kill-mid-trade, internet-disconnect, watchdog catch verification
+The test: Every changed line should trace directly to the user's request.
 
-## 7. Subagents
+## 4. Goal-Driven Execution
 
-- `leakage-checker` (Haiku, read-only) — pre-merge on any `src/data/` change; before Phase 0 exit
-- `backtest-runner` (Haiku, writes only `scripts/backtest_results/`) — before walk-forward gate; before deploy
-- `test-enforcer` (Haiku, read-only) — start of every implementation task; phase exit
-- `decisions-auditor` (Sonnet, read-only) — end of every implementation task before user diff review
+**Define success criteria. Loop until verified.**
 
-## 8. File structure
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
 
+For multi-step tasks, state a brief plan:
 ```
-btc-bot-v3/
-├── CLAUDE.md, DECISIONS.md, CHANGELOG.md, INDEX.md, NOTES.md
-├── constants.py             # Frozen dataclasses
-├── agent_config.json        # Runtime: SHA256, atr_median, paths
-├── pyproject.toml
-├── docs/
-│   ├── context/             # 8 cards, ≤1.5KB each
-│   ├── archive/             # old_project.md + Phase A audits — never load in sessions
-│   └── sessions/            # one log per phase exit
-├── src/
-│   ├── data/ predictor/ trader/ execution/ dashboard/
-├── tests/                   # mirrors src/ exactly
-├── scripts/                 # one-time runners; src/ never imports from here
-├── data/
-│   ├── raw/                 # write-once Kraken OHLCVT
-│   ├── processed/2026-MM-DD/
-│   └── test_locked/         # 120,960 candles; src/ never references this
-├── checkpoints/             # {component}_{wandb_run}_{sha[:8]}.pt
-└── logs/                    # rotating JSON, 10MB × 30
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
 ```
 
-## 9. Currently open questions (live; pinned to a resolution gate)
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
-- **Lookback** (240 / 720 / 1440) — resolved by smoke-sweep before long training run
-- **Confidence threshold** for the binary gate — calibrated empirically against feature-pipeline output before paper trading
-- **Starting live capital** — user input post-paper-gate (must be ≥ Kraken's ~$10 minimum order at 1% sizing)
-- **Whether to add RSI/MACD/Bollinger** — defer to post-paper-trading; do NOT tune feature set in-sample now
-- **Move to RL trader** — re-evaluate after ≥3 months stable paper trading on rules; rules remain risk-gate even if RL is added
+---
 
-If a session needs a value that has no resolution gate above, stop and ask.
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
-## 10. Conventions
+---
 
-- Naming: `snake_case` modules, `PascalCase` classes, `UPPER_SNAKE` constants, `phase-XY` branches, `NN-component-topic.md` for atomic docs.
-- Types: full type hints in `src/`. `mypy --strict` on PR.
-- Versioning: every checkpoint stamps `{component}_{wandb_run_id}_{sha256[:8]}.pt`. WebSocket payloads carry `predictor_hash` + `predictor_contract_version`.
-- Logging: structured JSON via `structlog`. Run tag = git SHA + scaler hash + `constants.py` hash + fold ID. W&B starts on the first training step.
-- Time: `datetime.now(timezone.utc)` always. Kraken candle close time is the canonical timestamp.
+## Project-specific instructions
+
+### Identity
+
+Solo paper-trading BTC bot. Three components: **Predictor** (PatchTST encoder, 1,440-candle lookback, multi-step quantile forecast), **Trader** (rules-based, uncertainty-aware sizing, exchange-native stops), **Dashboard** (FastAPI + vanilla JS, read-only telemetry + kill-switch button). Single user, Windows, RTX 4060 8GB. **No real capital until paper-trading gates pass and statistical edge is proven by permutation test.**
+
+### Repo state
+
+**Design phase.** `src/`, `tests/`, `scripts/`, and build config (`pyproject.toml`) do not yet exist. Don't attempt to run commands that require them — flag the gap and ask.
+
+When `DECISIONS.md`, `INDEX.md`, and `constants.py` land on this branch, read them first (in that order) before any coding session. They are the source of truth for architectural decisions, task → file mapping, and frozen magic numbers respectively.
+
+### Tech stack
+
+- Python 3.x with full type hints; `mypy --strict` on PR
+- PyTorch (PatchTST encoder, patch_size=16)
+- pandas, numpy (data pipeline)
+- FastAPI + vanilla JS + Lightweight Charts (dashboard, bound to `127.0.0.1` only)
+- pytest (`tests/` mirrors `src/` exactly)
+- structlog (structured JSON logs)
+- Weights & Biases (training tracking)
+- SQLite (paper) / PostgreSQL+WAL (live)
+- Kraken WebSocket v2 + REST (data + trading)
+- Windows Credential Manager via `keyring` (secrets — never `.env`)
+
+### Project-specific rules (override Karpathy defaults where they conflict)
+
+- **Tests first** for any code under `src/`. Failing tests encoding the exit criteria are committed before implementation. This overrides Karpathy §4's "verify after"; verification is built in from the start.
+- **Magic numbers live in `constants.py` only**, inside frozen dataclasses. No bare module-level constants. No hardcoded thresholds like `if x > 0.62:`.
+- **`src/` never imports from `scripts/`.** Scripts call into `src/`, never the inverse.
+- **`data/test_locked/` never referenced from `src/`.** Enforced by `grep -r 'test_locked' src/` plus `sys.settrace` runtime guard during training.
+- **All timestamps UTC.** `datetime.now()` without `tz=timezone.utc` is a CI failure in `src/`.
+- **Exchange-native stop-loss is mandatory.** Execution refuses any order whose stop cannot be placed at Kraken. No naked positions under any code path.
+- **SHA256 manifest verified on every weight read.** Covers weights + scaler + `constants.py`.
+- **`asyncio` only in `src/execution/`.** Predictor and trader code stays synchronous.
+- **One branch per phase:** `phase-XY` off `developer`; `developer` → `main` at phase exit. Never commit to `main` directly.
+- **Any `DECISIONS.md` change requires a `CHANGELOG.md` entry in the same commit.**
+- **Flag every unspecced decision.** If a task requires a value not in `DECISIONS.md` or `constants.py`, stop and ask. Do not "use a reasonable default" — this aligns with Karpathy §1.
+
+### Commands (when toolchain lands)
+
+| Task | Command |
+|---|---|
+| Test suite | `pytest` |
+| Single test | `pytest tests/path/test_file.py::test_name` |
+| Type check | `mypy --strict src/` |
+| Leakage audit | `grep -r 'test_locked' src/` (must return nothing) |
+| Predictor smoke (1 epoch, 1 fold) | `python scripts/train_predictor.py --smoke` |
+| Backtest | `python scripts/backtest.py` |
+| Walk-forward holdout (12×1w gate) | `python scripts/holdout_evaluator.py` |
+| Permutation test (pre-live gate) | `python scripts/permutation_test.py` |
+| Dashboard | `python -m src.dashboard.main` |
+| Execution loop | `python -m src.execution.loop` |
