@@ -1,0 +1,175 @@
+"""
+constants.py — single source of truth for every magic number in btc-bot-v3.
+
+All values are grouped into frozen dataclasses. `frozen=True` prevents
+mutation at runtime, so a stray `cfg.FEE_RATE_TAKER = 0.001` raises.
+
+Any change to any value here must be paired with a CHANGELOG.md entry
+in the same commit. Pre-merge check enforces.
+
+Sentinel values for unresolved decisions are typed `None` so a
+consumer that forgets to handle them fails loudly rather than silently
+defaulting. Resolution gates are documented in DECISIONS.md and CLAUDE.md §9.
+"""
+from dataclasses import dataclass
+from typing import Optional
+
+
+# ============================================================
+# Data pipeline
+# ============================================================
+@dataclass(frozen=True)
+class DataConfig:
+    HISTORICAL_START: str = "2018-01-01"
+
+    # Walk-forward splits (candles)
+    WALK_FORWARD_TRAIN: int = 150_000
+    WALK_FORWARD_VAL: int = 50_000
+    WALK_FORWARD_TEST: int = 10_000
+    WALK_FORWARD_STRIDE: int = 50_000  # = VAL block; non-overlapping validation
+
+    # Locked test set: 84 days × 1440 = 12 × 1-week non-overlapping windows
+    LOCKED_TEST_CANDLES: int = 120_960
+
+    # Feature pipeline
+    NUM_INPUT_FEATURES: int = 5  # OHLC log-returns + log1p volume change
+    LOOKBACK: int = 1_440  # SWEEP [240, 720, 1440] before long training run
+
+    # Validator
+    GAP_INTERPOLATE_MAX_HOURS: int = 12  # gaps > this trigger is_interpolated=True
+
+
+# ============================================================
+# Predictor
+# ============================================================
+@dataclass(frozen=True)
+class PredictorConfig:
+    HORIZON: int = 15  # direct multi-step; autoregression banned
+    PATCH_SIZE: int = 16  # PatchTST: 1440 / 16 = 90 tokens
+
+    # Output head: q10, q50, q90 per OHLCV dimension per future step
+    QUANTILES: tuple = (0.10, 0.50, 0.90)
+    NUM_OUTPUT_DIMS: int = 5  # OHLCV
+
+    # Loss
+    DIRECTION_PENALTY_LAMBDA: float = 1.75  # range [1.5, 2.0]
+
+    # Bug regression tests (must be exposed for tests to assert against)
+    EARLY_STOPPING_PATIENCE: int = 10
+    VARIANCE_FLOOR_FIRST_N_STEPS: int = 100  # assert loss > 0 across these
+
+    # Retrain triggers
+    RETRAIN_NLL_TRIGGER_MULT: float = 2.0  # 7-day NLL > 2.0× baseline
+    RETRAIN_CALENDAR_DAYS: int = 30
+    RETRAIN_FINETUNE_WINDOW_DAYS: int = 14  # [t-21, t-7]
+    RETRAIN_GATE_WINDOW_DAYS: int = 7  # [t-7, t], strictly non-overlapping
+
+    # Deploy gates (all three required, simultaneously)
+    DEPLOY_GATE_COVERAGE_TOLERANCE: float = 0.05  # ±5% from training-time
+    DEPLOY_GATE_DA_THRESHOLD: float = 0.535  # > 53.5% on |q50| > FEE_THRESHOLD
+    DEPLOY_GATE_CAL_LOWER: float = 0.75
+    DEPLOY_GATE_CAL_UPPER: float = 0.85
+
+    # Pre-training gate
+    BASELINE_DA_GATE: float = 0.52  # signal-first sanity check
+
+    # Holdout walk-forward gate
+    HOLDOUT_WINDOW_DAYS: int = 7
+    HOLDOUT_NUM_WINDOWS: int = 12  # 12 × 1-week = 84 days = 120,960 candles
+
+
+# ============================================================
+# Trader (rules-based for v3)
+# ============================================================
+@dataclass(frozen=True)
+class TraderConfig:
+    # Position sizing
+    POSITION_SIZE_BASE: float = 0.01  # 1% per trade fixed-fractional
+    MAX_ALLOCATION: float = 0.04  # ±4% hard cap
+
+    # Confidence gate
+    # spread = (q90 - q10) / |q50|
+    # Above this, force allocation to zero. Calibrate empirically before paper.
+    CONFIDENCE_THRESHOLD: Optional[float] = None  # TBD before paper trading
+
+    # Exit priority stack
+    SIGNAL_REVERSAL_CANDLES: int = 3  # consecutive opposite signals to exit
+    TIME_BASED_EXIT_MINUTES: Optional[int] = None  # TBD if used; lowest priority
+
+    # Predictor staleness decay
+    STALENESS_DECAY_FLOOR: float = 0.50  # multiplier at retrain_date + 30d
+    STALENESS_DECAY_DAYS: int = 30  # linear from 1.0 to floor
+
+
+# ============================================================
+# Execution engine
+# ============================================================
+@dataclass(frozen=True)
+class ExecutionConfig:
+    # Fee model — Kraken base-tier
+    FEE_RATE_TAKER: float = 0.0026  # 0.26% per side
+    SLIPPAGE_FLOOR: float = 0.0005  # 0.05% on every market order
+    # Round-trip drag: 2 × 0.26% + 2 × 0.05%
+    FEE_THRESHOLD: float = 0.0062  # consumed by training loss + DA evaluation gate
+
+    # Spread model: spread = SPREAD_BASE + SPREAD_ATR_SCALE × atr_ratio
+    # atr_ratio = current_ATR / rolling_median_ATR (1440 candles)
+    SPREAD_BASE: float = 0.0005
+    SPREAD_ATR_SCALE: float = 0.0001
+    ATR_ROLLING_MEDIAN_WINDOW: int = 1_440
+
+    # Stale candle handling
+    STALE_HALT_SECONDS: int = 90
+    STALE_AUTO_CLOSE_SECONDS: int = 300  # 5 minutes
+
+    # Cycle timing (60s loop)
+    CYCLE_TARGET_SECONDS: int = 60
+    CYCLE_WARNING_SECONDS: int = 45
+    CYCLE_HARD_SECONDS: int = 55
+
+    # Kill switch
+    KILL_FLAG_PATH: str = "KILL_SWITCH.flag"
+    KILL_FLAG_TMP_PATH: str = "KILL_SWITCH.flag.tmp"  # atomic write
+    KILL_POLL_SECONDS: int = 2
+
+    # Stop-loss confirmation timeout
+    STOP_LOSS_CONFIRMATION_TIMEOUT_SECONDS: int = 5
+
+    # Network
+    DASHBOARD_BIND_HOST: str = "127.0.0.1"
+    DASHBOARD_BIND_PORT: int = 8000
+
+    # Kill criteria — auto-shutdown (no operator override path)
+    K1_SESSION_DRAWDOWN: float = 0.03  # 3% in 24h rolling
+    K2_TOTAL_DRAWDOWN: float = 0.10  # 10% total
+    K4_NLL_BASELINE_MULT: float = 2.0  # 7-day NLL > 2.0× baseline
+    K8_STALE_MINUTES: int = 5
+
+    # Kill criteria — alert + manual review
+    K3_PNL_ANOMALY_DAYS: int = 7
+    K5_CALIBRATION_FLOOR: float = 0.50  # < 50% × 3 days
+    K5_CALIBRATION_BREACH_DAYS: int = 3
+    K6_ZERO_TRADE_HOURS: int = 4
+    K7_WINRATE_FLOOR: float = 0.40  # < 40% × 3 days
+    K7_WINRATE_BREACH_DAYS: int = 3
+    K9_LATENCY_BREACH_CYCLES: int = 3
+
+
+# ============================================================
+# RL trader (deferred; v3 ships rules-based)
+# ============================================================
+@dataclass(frozen=True)
+class RLConfig:
+    """Reserved for the RL trader iteration after rules-based demonstrates
+    stable signal on validated quantile output (≥3 months paper trading)."""
+    pass
+
+
+# ============================================================
+# Module-level singletons — import these, do not instantiate ad hoc.
+# ============================================================
+DATA = DataConfig()
+PREDICTOR = PredictorConfig()
+TRADER = TraderConfig()
+EXECUTION = ExecutionConfig()
+RL = RLConfig()
