@@ -2,9 +2,15 @@
 
 Flat key → current value. Source of truth for every coding session. Any change here requires a `CHANGELOG.md` entry in the same commit. Append-only history lives in `CHANGELOG.md`; this file is overwritten in place.
 
-Last consolidated: 2026-05-08
+Last consolidated: 2026-05-09
 
 ---
+
+## Toolchain
+
+- **package_manager**: UV. `uv sync` installs the locked environment; `uv add` declares new deps; `uv run` executes all scripts and tools. Never use bare `pip install`.
+- **build_backend**: hatchling (UV-native; setuptools removed — project ships no importable package, only scripts)
+- **lock_file**: `uv.lock` committed to version control for reproducible installs (`.gitignore` pre-configured to track it)
 
 ## Predictor
 

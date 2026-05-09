@@ -82,6 +82,7 @@ When `DECISIONS.md`, `INDEX.md`, and `constants.py` land on this branch, read th
 
 ### Tech stack
 
+- **UV** (package manager — `uv sync` / `uv add` / `uv run`; never bare `pip install`)
 - Python 3.x with full type hints; `mypy --strict` on PR
 - PyTorch (PatchTST encoder, patch_size=16)
 - pandas, numpy (data pipeline)
@@ -111,13 +112,16 @@ When `DECISIONS.md`, `INDEX.md`, and `constants.py` land on this branch, read th
 
 | Task | Command |
 |---|---|
-| Test suite | `pytest` |
-| Single test | `pytest tests/path/test_file.py::test_name` |
-| Type check | `mypy --strict src/` |
+| Install / sync deps | `uv sync` |
+| Add a dependency | `uv add <package>` |
+| Test suite | `uv run pytest` |
+| Single test | `uv run pytest tests/path/test_file.py::test_name` |
+| Type check | `uv run mypy --strict src/` |
 | Leakage audit | `grep -r 'test_locked' src/` (must return nothing) |
-| Predictor smoke (1 epoch, 1 fold) | `python scripts/train_predictor.py --smoke` |
-| Backtest | `python scripts/backtest.py` |
-| Walk-forward holdout (12×1w gate) | `python scripts/holdout_evaluator.py` |
-| Permutation test (pre-live gate) | `python scripts/permutation_test.py` |
-| Dashboard | `python -m src.dashboard.main` |
-| Execution loop | `python -m src.execution.loop` |
+| Predictor smoke (1 epoch, 1 fold) | `uv run python scripts/train_predictor.py --smoke` |
+| Backtest | `uv run python scripts/backtest.py` |
+| Walk-forward holdout (12×1w gate) | `uv run python scripts/holdout_evaluator.py` |
+| Permutation test (pre-live gate) | `uv run python scripts/permutation_test.py` |
+| Dashboard | `uv run python -m src.dashboard.main` |
+| Execution loop | `uv run python -m src.execution.loop` |
+| Bootstrap ingest | `uv run python scripts/ingest_kraken_history.py` |
