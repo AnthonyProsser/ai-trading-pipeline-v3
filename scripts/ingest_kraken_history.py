@@ -12,7 +12,7 @@ import argparse
 import sys
 import zipfile
 from contextlib import suppress
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PureWindowsPath
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -26,7 +26,7 @@ DEFAULT_CACHE_DIR = REPO_ROOT / DATA.KRAKEN_HISTORY_CACHE_DIR
 
 
 def normalize_member_path(member: str) -> str:
-    return PurePosixPath(member.replace("\\", "/")).as_posix()
+    return PureWindowsPath(member).as_posix()
 
 
 def temp_path(path: Path) -> Path:
@@ -55,7 +55,7 @@ def download_zip(gdrive_id: str, dest: Path, force: bool) -> Path:
         if not zipfile.is_zipfile(temp_dest):
             raise RuntimeError(f"downloaded file at {temp_dest} is not a valid zip")
         temp_dest.replace(dest)
-    except BaseException:
+    except (Exception, KeyboardInterrupt):
         remove_if_exists(temp_dest)
         raise
     return dest
@@ -82,7 +82,7 @@ def extract_member(zip_path: Path, member: str, out_dir: Path, force: bool) -> P
                 for chunk in iter(lambda: src.read(1 << 20), b""):
                     dst.write(chunk)
             temp_out_path.replace(out_path)
-        except BaseException:
+        except (Exception, KeyboardInterrupt):
             remove_if_exists(temp_out_path)
             raise
     return out_path
