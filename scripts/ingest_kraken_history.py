@@ -13,14 +13,14 @@ import sys
 import zipfile
 from pathlib import Path
 
-import gdown
+from gdown.download import download
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_GDRIVE_ID = "1ptNqWYidLkhb2VAKuLCxmp2OXEfGO-AP"
 DEFAULT_INNER_PATH = "master_q4/BTCUSD_1.csv"
 DEFAULT_OUT_DIR = REPO_ROOT / "data" / "raw"
 DEFAULT_CACHE_DIR = REPO_ROOT / "data" / ".cache"
-DEFAULT_ZIP_NAME = "kraken_master_q4.zip"
+DEFAULT_ZIP_STEM = "kraken_master_q4"
 
 
 def download_zip(gdrive_id: str, dest: Path, force: bool) -> Path:
@@ -28,7 +28,7 @@ def download_zip(gdrive_id: str, dest: Path, force: bool) -> Path:
         print(f"[skip-download] zip cached at {dest}")
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    gdown.download(id=gdrive_id, output=str(dest), quiet=False)
+    download(id=gdrive_id, output=str(dest), quiet=False)
     if not dest.exists():
         raise RuntimeError(f"gdown reported success but {dest} not found")
     return dest
@@ -53,6 +53,10 @@ def extract_member(zip_path: Path, member: str, out_dir: Path, force: bool) -> P
     return out_path
 
 
+def cache_zip_name(gdrive_id: str) -> str:
+    return f"{DEFAULT_ZIP_STEM}_{gdrive_id}.zip"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--gdrive-id", default=DEFAULT_GDRIVE_ID)
@@ -70,7 +74,7 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    zip_path = args.cache_dir / DEFAULT_ZIP_NAME
+    zip_path = args.cache_dir / cache_zip_name(args.gdrive_id)
     download_zip(args.gdrive_id, zip_path, args.force)
     out_path = extract_member(zip_path, args.inner_path, args.out_dir, args.force)
     print(f"[done] {out_path}")

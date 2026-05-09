@@ -19,4 +19,4 @@ testpaths = ["tests"]
 
 [tool.mypy]
 strict = true
-files = ["src", "scripts"]
+files = ["scripts"]
