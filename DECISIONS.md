@@ -11,6 +11,7 @@ Last consolidated: 2026-05-09
 - **package_manager**: UV. `uv sync` installs the locked environment; `uv add` declares new deps; `uv run` executes all scripts and tools. Never use bare `pip install`.
 - **build_backend**: hatchling (UV-native; setuptools removed — project ships no importable package, only scripts)
 - **lock_file**: `uv.lock` committed to version control for reproducible installs (`.gitignore` pre-configured to track it)
+- **uv_package_install_mode**: `[tool.uv] package = false` (temporary while `src/`/package module does not exist; remove once packaging is wired so `uv sync` installs the project package)
 
 ## Predictor
 

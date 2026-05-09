@@ -110,13 +110,15 @@ When `DECISIONS.md`, `INDEX.md`, and `constants.py` land on this branch, read th
 
 ### Commands (when toolchain lands)
 
+`scripts/ingest_kraken_history.py` is currently present; other script/module commands below are planned phase deliverables tracked in `INDEX.md` and become runnable as those files land.
+
 | Task | Command |
 |---|---|
 | Install / sync deps | `uv sync` |
 | Add a dependency | `uv add <package>` |
 | Test suite | `uv run pytest` |
 | Single test | `uv run pytest tests/path/test_file.py::test_name` |
-| Type check | `uv run mypy --strict src/` |
+| Type check | `uv run mypy` |
 | Leakage audit | `grep -r 'test_locked' src/` (must return nothing) |
 | Predictor smoke (1 epoch, 1 fold) | `uv run python scripts/train_predictor.py --smoke` |
 | Backtest | `uv run python scripts/backtest.py` |

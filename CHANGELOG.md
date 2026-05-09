@@ -14,9 +14,11 @@ Format:
 ---
 
 ## 2026-05-09 — UV as primary package manager
-- toolchain_package_manager: absent → UV (`uv sync` / `uv add` / `uv run`)
-- toolchain_build_backend: setuptools → hatchling
-- Reason: user directive to standardize on UV as the #1 toolchain. Hatchling adopted as UV-native build backend; setuptools removed. `uv.lock` committed per `.gitignore` pre-configuration.
+- package_manager: absent → UV (`uv sync` / `uv add` / `uv run`)
+- build_backend: absent → hatchling
+- lock_file: absent → `uv.lock` committed
+- uv_package_install_mode: absent → `[tool.uv] package = false` (temporary)
+- Reason: user directive to standardize on UV as the #1 toolchain. This introduced Toolchain decision keys in `DECISIONS.md`; `pyproject.toml` previously used setuptools before this decision was formalized. `uv.lock` is committed per `.gitignore` pre-configuration.
 - Source: user directive
 
 ## 2026-05-09 — Bootstrap ingest constants
