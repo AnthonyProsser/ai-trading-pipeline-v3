@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-05-09 — UV as primary package manager
+- package_manager: absent → UV (`uv sync` / `uv add` / `uv run`)
+- build_backend: absent → hatchling
+- lock_file: absent → `uv.lock` committed
+- uv_package_install_mode: absent → `[tool.uv] package = false` (temporary)
+- Reason: user directive to standardize on UV as the #1 toolchain. This introduced Toolchain decision keys in `DECISIONS.md`; `pyproject.toml` previously used setuptools before this decision was formalized. `uv.lock` is committed per `.gitignore` pre-configuration.
+- Source: user directive
+
 ## 2026-05-09 — Bootstrap ingest constants
 - data_config.kraken_history_bootstrap_defaults: absent → `KRAKEN_HISTORY_GDRIVE_ID`, `KRAKEN_HISTORY_INNER_PATH`, `KRAKEN_HISTORY_ZIP_STEM`, `KRAKEN_HISTORY_OUT_DIR`, `KRAKEN_HISTORY_CACHE_DIR`
 - Reason: move ingest bootstrap literals into `constants.py` so the bootstrap script follows the repository constants policy.
