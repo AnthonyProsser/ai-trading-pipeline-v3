@@ -22,6 +22,13 @@ from typing import Optional
 class DataConfig:
     HISTORICAL_START: str = "2018-01-01"
 
+    # Bootstrap ingest
+    KRAKEN_HISTORY_GDRIVE_ID: str = "1ptNqWYidLkhb2VAKuLCxmp2OXEfGO-AP"
+    KRAKEN_HISTORY_INNER_PATH: str = "master_q4/BTCUSD_1.csv"
+    KRAKEN_HISTORY_ZIP_STEM: str = "kraken_master_q4"
+    KRAKEN_HISTORY_OUT_DIR: str = "data/raw"
+    KRAKEN_HISTORY_CACHE_DIR: str = "data/.cache"
+
     # Walk-forward splits (candles)
     WALK_FORWARD_TRAIN: int = 150_000
     WALK_FORWARD_VAL: int = 50_000
@@ -48,7 +55,7 @@ class PredictorConfig:
     PATCH_SIZE: int = 16  # PatchTST: 1440 / 16 = 90 tokens
 
     # Output head: q10, q50, q90 per OHLCV dimension per future step
-    QUANTILES: tuple = (0.10, 0.50, 0.90)
+    QUANTILES: tuple[float, float, float] = (0.10, 0.50, 0.90)
     NUM_OUTPUT_DIMS: int = 5  # OHLCV
 
     # Loss
