@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BTC Bot v3 — Task Map</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-elev: #1a1d24;
+    --bg-elev2: #232730;
+    --border: #2d323d;
+    --text: #e6e8ee;
+    --text-dim: #9aa1b0;
+    --text-dimmer: #6b7180;
+    --accent: #6ea8ff;
+    --sonnet: #3aa68b;
+    --opus: #a47bd9;
+    --skill: #4a8bd4;
+    --agent: #d49b4a;
+    --done: #4ec97e;
+    --planned: #d4794a;
+    --before: #7aa3d4;
+    --during: #d49b4a;
+    --after: #b07ad4;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 20px 80px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }
+  header h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
+  header .sub { color: var(--text-dim); font-size: 13px; }
+  .stats { margin-top: 12px; display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+  .stats .pill { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; color: var(--text-dim); }
+  .stats .pill strong { color: var(--text); }
+  .stats .pill.done strong { color: var(--done); }
+  .stats .pill.remaining strong { color: var(--accent); }
+
+  .always-on { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-top: 16px; font-size: 12.5px; color: var(--text-dim); }
+  .always-on strong { color: var(--text); }
+  .always-on .chips { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+  section.phase { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+  section.phase > h2 { margin: 0; padding: 12px 16px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; transition: background 0.15s; }
+  section.phase > h2:hover { background: var(--bg-elev2); }
+  section.phase > h2 .caret { display: inline-block; width: 10px; color: var(--text-dim); transition: transform 0.2s; }
+  section.phase.collapsed > h2 .caret { transform: rotate(-90deg); }
+  section.phase > h2 .count { margin-left: auto; font-weight: 400; font-size: 12.5px; color: var(--text-dim); }
+  section.phase > h2 .count .done-n { color: var(--done); }
+  section.phase.all-done > h2 { opacity: 0.55; }
+
+  .tasks { padding: 4px 0; border-top: 1px solid var(--border); overflow: hidden; max-height: 99999px; transition: max-height 0.25s ease, padding 0.15s, border-color 0.15s; }
+  section.phase.collapsed .tasks { max-height: 0; padding: 0; border-top-color: transparent; }
+
+  article.task { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  article.task:last-child { border-bottom: 0; }
+
+  .task-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .task-row label { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; cursor: pointer; }
+  .task-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--done); cursor: pointer; margin: 0; }
+  .task-title { font-size: 13.5px; }
+  article.task.done .task-title { text-decoration: line-through; color: var(--text-dimmer); }
+
+  .chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; padding: 2px 8px; border-radius: 999px; color: #0f1115; }
+  .chip-sonnet { background: var(--sonnet); }
+  .chip-opus { background: var(--opus); }
+
+  .expand-btn { background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 2px 8px; font-size: 11.5px; cursor: pointer; transition: all 0.15s; }
+  .expand-btn:hover { color: var(--text); border-color: var(--text-dim); }
+
+  .details { max-height: 0; overflow: hidden; transition: max-height 0.25s ease, padding 0.15s, margin 0.15s; }
+  article.task.expanded .details { max-height: 1200px; padding-top: 8px; margin-top: 6px; border-top: 1px dashed var(--border); }
+
+  .details h4 { margin: 8px 0 4px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dimmer); }
+  .details .why { color: var(--text-dim); font-style: italic; font-size: 12.5px; margin: 0 0 4px; }
+  .details ul.files { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .details ul.files code { background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 12px; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+  .details ul.files li.planned code { border-color: var(--planned); border-style: dashed; color: var(--planned); }
+  .details ul.files li.planned::after { content: "planned"; margin-left: 4px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--planned); vertical-align: middle; }
+
+  .ecc-block { margin-top: 8px; display: grid; grid-template-columns: 70px 1fr; column-gap: 10px; row-gap: 6px; align-items: start; font-size: 12px; }
+  .ecc-when { color: var(--text-dimmer); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.05em; padding-top: 3px; }
+  .ecc-when.before { color: var(--before); }
+  .ecc-when.during { color: var(--during); }
+  .ecc-when.after { color: var(--after); }
+  .ecc-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .ecc-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; border: 1px solid; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+  .ecc-chip.skill { color: var(--skill); border-color: var(--skill); background: rgba(74, 139, 212, 0.08); }
+  .ecc-chip.agent { color: var(--agent); border-color: var(--agent); background: rgba(212, 155, 74, 0.08); }
+  .ecc-empty { color: var(--text-dimmer); font-style: italic; font-size: 11.5px; }
+
+  footer { margin-top: 30px; text-align: center; color: var(--text-dimmer); font-size: 11.5px; }
+  footer code { background: var(--bg-elev); padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>BTC Bot v3 — Task Map</h1>
+    <div class="sub">55 tasks across 7 sections (45 from INDEX.md + 5 build-order additions for files that don't yet exist + 5 cross-phase / global gates already in INDEX). Click a phase to expand. Tick a task as you complete it — state is saved in your browser.</div>
+    <div class="stats" id="stats"></div>
+    <div class="always-on">
+      <strong>Always-on ECC components — invoke these on every task:</strong>
+      <div class="chips">
+        <span class="ecc-chip skill" title="everything-claude-code:plan — MANDATORY before starting any task. Restates requirements, assesses risks, produces step-by-step implementation plan. Waits for user confirmation.">🛠 /everything-claude-code:plan</span>
+        <span class="ecc-chip skill" title="everything-claude-code:gateguard — active fact-forcing gate; runs automatically before edits/writes/bash">🛠 gateguard</span>
+        <span class="ecc-chip skill" title="everything-claude-code:git-workflow — invoke at the start of each phase (phase-XY branch off developer)">🛠 git-workflow</span>
+        <span class="ecc-chip skill" title="everything-claude-code:tdd-guide / tdd-workflow — every src/ task is tests-first per CLAUDE.md">🛠 tdd-guide / tdd-workflow</span>
+      </div>
+      <div style="margin-top:8px;font-size:11.5px;color:var(--text-dimmer);">
+        Workflow per task: (1) <code>/everything-claude-code:plan</code> first → (2) invoke the per-task ECC skills/agents shown in <em>Details</em> at their before/during/after phase → (3) commit on the matching <code>phase-XY</code> branch.
+      </div>
+    </div>
+  </header>
+
+  <main id="phases"></main>
+
+  <footer>
+    Driver document for BTC Bot v3 build. Source: <code>INDEX.md</code> + <code>consolidated-consolidated-plan.md §3</code>. Done state persists in <code>localStorage</code> key prefix <code>taskmap.v1.</code>.
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+const FILE_EXISTS = {
+  "CLAUDE.md": true,
+  "DECISIONS.md": true,
+  "INDEX.md": true,
+  "CHANGELOG.md": true,
+  "NOTES.md": true,
+  "agent-config.md": true,
+  "consolidated-consolidated-plan.md": true,
+  "consolidated-consolidated-plan.md §1.1": true,
+  "dashboard.md": true,
+  "execution-engine.md": true,
+  "feature-pipeline.md": true,
+  "predictor-contract.md": true,
+  "predictor-training.md": true,
+  "splits-validation.md": true,
+  "trader-rules.md": true,
+  "constants.py": true,
+  "pyproject.toml": true,
+  "uv.lock": true,
+  "scripts/ingest_kraken_history.py": true,
+  "agent_config.json": false,
+  "matching context card": true,
+  "(defaults only)": true,
+  "src/data/feature_pipeline.py": false,
+  "src/data/walk_forward.py": false,
+  "src/data/scaler.py": false,
+  "src/data/validator.py": false,
+  "src/data/manifest.py": false,
+  "src/predictor/model.py": false,
+  "src/predictor/training.py": false,
+  "src/predictor/loss.py": false,
+  "src/predictor/rollout.py": false,
+  "src/execution/loop.py": false,
+  "src/execution/watchdog.py": false,
+  "src/execution/backends.py": false,
+  "src/execution/orders.py": false,
+  "src/execution/ingest.py": false,
+  "src/execution/reconcile.py": false,
+  "src/execution/staleness.py": false,
+  "src/execution/secrets.py": false,
+  "src/execution/alerter.py": false,
+  "src/trader/exit_priority.py": false,
+  "src/trader/sizing.py": false,
+  "src/dashboard/main.py": false,
+  "src/dashboard/replay.py": false,
+  "scripts/train_predictor.py": false,
+  "scripts/baseline_signal_check.py": false,
+  "scripts/deploy_predictor.py": false,
+  "scripts/retrain_predictor.py": false,
+  "scripts/backtest.py": false,
+  "scripts/robustness_gate.py": false,
+  "scripts/chaos_test.py": false,
+  "scripts/permutation_test.py": false,
+  "scripts/holdout_evaluator.py": false,
+  "tests/predictor/test_training_bugs.py": false,
+  "tests/execution/test_kill_switch.py": false
+};
+
+const PHASES = [
+  { id: "p-1",    label: "Phase −1 / Setup" },
+  { id: "p0",     label: "Phase 0 / Data" },
+  { id: "p1",     label: "Phase 1 / Predictor" },
+  { id: "p2",     label: "Phase 2 / Execution engine + environment" },
+  { id: "p3",     label: "Phase 3 / Trader + backtester" },
+  { id: "p4",     label: "Phase 4 / Dashboard" },
+  { id: "pcross", label: "Cross-phase" }
+];
+
+const TASKS = [
+  // === Phase -1 / Setup ===
+  { phase: "p-1", id: "constants-entry", title: "Add a new entry to constants.py",
+    agent: "sonnet", why: "Single file, frozen-dataclass append.",
+    files: ["constants.py"],
+    ecc: { after: { agents: ["python-reviewer"] } } },
+  { phase: "p-1", id: "doc-set-verify", title: "Stand up the doc set / verify all docs exist",
+    agent: "sonnet", why: "Read-only audit. Defaults loaded by CLAUDE.md cover everything.",
+    files: ["(defaults only)"],
+    ecc: { before: { skills: ["architecture-decision-records"] } } },
+  { phase: "p-1", id: "predictor-io-contract", title: "Lock the predictor I/O contract",
+    agent: "opus", why: "Cross-cutting: consumed by trader, backtester, dashboard, manifest. Locking it wrong cascades.",
+    files: ["predictor-contract.md", "DECISIONS.md", "consolidated-consolidated-plan.md §1.1"],
+    ecc: { before: { skills: ["architecture-decision-records"], agents: ["architect"] } } },
+
+  // === Phase 0 / Data ===
+  { phase: "p0", id: "feature-pipeline-module", title: "Build the feature pipeline module (new)",
+    agent: "sonnet", why: "5 features fully specced (open/high/low/close log-ret + log1p volume).",
+    files: ["feature-pipeline.md", "constants.py", "src/data/feature_pipeline.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["python-patterns"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p0", id: "new-candle-feature", title: "Add a new candle feature",
+    agent: "sonnet", why: "Surgical: single formula + scaler entry + test.",
+    files: ["feature-pipeline.md", "constants.py", "src/data/feature_pipeline.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p0", id: "leakage-audit", title: "Audit for data leakage",
+    agent: "opus", why: "Broad scope: reads all of src/data/, tests/data/, walk-forward and scaler logic.",
+    files: ["feature-pipeline.md", "splits-validation.md"],
+    ecc: { during: { skills: ["security-review"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p0", id: "walk-forward-splitter", title: "Build the walk-forward splitter (new)",
+    agent: "sonnet", why: "Window math + stride logic + tests; specced in splits-validation.md.",
+    files: ["splits-validation.md", "constants.py", "src/data/walk_forward.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["python-patterns"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p0", id: "walk-forward-fold", title: "Set up a new walk-forward fold",
+    agent: "sonnet", why: "Parameter tweak against existing splitter.",
+    files: ["splits-validation.md", "constants.py", "src/data/walk_forward.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p0", id: "per-fold-scaler", title: "Build per-fold MinMaxScaler",
+    agent: "sonnet", why: "Small surface; strict fit-window assertion is the contract.",
+    files: ["feature-pipeline.md", "src/data/scaler.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p0", id: "locked-test-carveout", title: "Carve out the locked test set",
+    agent: "sonnet", why: "Single carve operation: 120,960 candles = 12 × 1-week.",
+    files: ["splits-validation.md", "src/data/walk_forward.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p0", id: "kraken-ohlcvt-ingest", title: "Build Kraken OHLCVT ingest",
+    agent: "opus", why: "Kraken REST spec + retry + write-once contract. Multiple failure modes.",
+    files: ["execution-engine.md", "scripts/ingest_kraken_history.py"],
+    ecc: { before: { skills: ["exa-search", "tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p0", id: "candle-validator", title: "Build CandleValidator (corruption + gap rules)",
+    agent: "sonnet", why: "Specced rule set: corrupted candles, gap detection, is_interpolated flag.",
+    files: ["feature-pipeline.md", "src/data/validator.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p0", id: "baseline-signal-check", title: "Run the baseline signal check",
+    agent: "sonnet", why: "Script invocation + comparison report. Pre-training gate.",
+    files: ["feature-pipeline.md", "scripts/baseline_signal_check.py"],
+    ecc: { during: { skills: ["python-testing"] } } },
+  { phase: "p0", id: "sha256-manifest", title: "Wire the SHA256 manifest",
+    agent: "opus", why: "Cross-cutting: covers weights + scaler PKL + constants.py; verified at startup AND on every weight reload.",
+    files: ["agent-config.md", "src/data/manifest.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["security-review"] }, after: { agents: ["python-reviewer"] } } },
+
+  // === Phase 1 / Predictor ===
+  { phase: "p1", id: "patchtst-model", title: "Build the PatchTST encoder model (new)",
+    agent: "opus", why: "Architecture: patch embed (patch=16) + pos enc + quantile head (3 quantiles × 5 dims × 15 steps).",
+    files: ["predictor-training.md", "predictor-contract.md", "src/predictor/model.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["pytorch-patterns"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p1", id: "training-loop-wandb", title: "Wire the training loop with W&B (new)",
+    agent: "opus", why: "Multi-component: loader + per-fold scaler + pinball+direction loss + ckpt + W&B logging + early stopping.",
+    files: ["predictor-training.md", "src/predictor/training.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["pytorch-patterns"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p1", id: "predictor-lookback", title: "Change the predictor lookback",
+    agent: "sonnet", why: "Single constant in PredictorConfig + matching tests.",
+    files: ["predictor-contract.md", "constants.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p1", id: "debug-training-loop", title: "Debug a predictor training-loop issue",
+    agent: "opus", why: "Bug location unknown by definition; needs wide context (loss.py + training.py + W&B logs + tests).",
+    files: ["predictor-training.md", "src/predictor/loss.py"],
+    ecc: { during: { skills: ["pytorch-patterns"], agents: ["pytorch-build-resolver"] } } },
+  { phase: "p1", id: "loss-function", title: "Add or modify the loss function",
+    agent: "opus", why: "Math + tests + W&B logging + retrain-gate impact. Affects FEE_THRESHOLD propagation.",
+    files: ["predictor-training.md", "constants.py", "src/predictor/loss.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["pytorch-patterns"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p1", id: "training-bug-regression-tests", title: "Variance-floor / trend-loss / patience regression tests",
+    agent: "sonnet", why: "Three mechanical tests against a fixed interface. All three v2 bugs prevented at write-time.",
+    files: ["predictor-training.md", "tests/predictor/test_training_bugs.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["python-testing"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p1", id: "predictor-smoke-run", title: "Run the predictor smoke run (1 epoch, 1 fold)",
+    agent: "sonnet", why: "Script invocation + non-NaN-loss + no-OOM check. Pre-4-week-run gate.",
+    files: ["predictor-training.md", "scripts/train_predictor.py"],
+    ecc: { during: { skills: ["verification-loop"] } } },
+  { phase: "p1", id: "lookback-sweep", title: "Run a lookback sweep",
+    agent: "sonnet", why: "Three runs at [240, 720, 1440]; pick by val MAE + DA.",
+    files: ["predictor-training.md", "scripts/train_predictor.py"],
+    ecc: { during: { skills: ["verification-loop"] } } },
+  { phase: "p1", id: "geometry-enforcement", title: "Implement geometry enforcement at every inference step",
+    agent: "sonnet", why: "Single rule (H ≥ max(O,C), L ≤ min(O,C)); resample up to 5×. Must apply to trader mock too.",
+    files: ["predictor-contract.md", "src/predictor/rollout.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p1", id: "retrain-predictor-script", title: "Build retrain_predictor.py (new)",
+    agent: "opus", why: "Warm start + fine-tune window [t-21, t-7] + gate window [t-7, t] + 3 deploy gates + manifest update.",
+    files: ["predictor-contract.md", "scripts/retrain_predictor.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["pytorch-patterns"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p1", id: "retrain-deploy-gates", title: "Run retrain deploy gates",
+    agent: "opus", why: "Three simultaneous statistical gates: coverage ±5%, DA > 53.5% on |q50|>FEE_THRESHOLD, calibration 75–85%.",
+    files: ["predictor-contract.md", "scripts/deploy_predictor.py"],
+    ecc: { during: { skills: ["verification-loop"] } } },
+  { phase: "p1", id: "deploy-checkpoint", title: "Deploy a new predictor checkpoint",
+    agent: "sonnet", why: "Gates assumed pre-checked; SHA256 manifest update + agent_config.json swap.",
+    files: ["agent-config.md", "scripts/deploy_predictor.py", "agent_config.json"],
+    ecc: { during: { skills: ["security-review"] }, after: { agents: ["python-reviewer"] } } },
+
+  // === Phase 2 / Execution ===
+  { phase: "p2", id: "execution-60s-loop", title: "Write the execution engine 60s loop",
+    agent: "opus", why: "Orchestrates predictor + trader + ingest + reconcile + watchdog + alerter. 45s warn / 55s hard.",
+    files: ["execution-engine.md", "src/execution/loop.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["performance-optimizer"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p2", id: "kill-switch-flag", title: "Wire the kill-switch flag check",
+    agent: "sonnet", why: "2s polling routine; atomic .tmp + rename writes. Survives dashboard/inference-engine crash.",
+    files: ["execution-engine.md", "src/execution/watchdog.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["safety-guard"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p2", id: "kill-switch-4case-test", title: "Run the kill-switch 4-case test",
+    agent: "sonnet", why: "Four mechanical cases; case 3 = write flag from CLI while dashboard offline.",
+    files: ["execution-engine.md", "tests/execution/test_kill_switch.py"],
+    ecc: { during: { skills: ["python-testing"] } } },
+  { phase: "p2", id: "paper-live-backends", title: "Build PaperBackend / LiveBackend siblings",
+    agent: "opus", why: "Parity contract test mandatory before live; both backends must match by construction.",
+    files: ["execution-engine.md", "src/execution/backends.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p2", id: "exchange-native-stop-loss", title: "Implement exchange-native stop-loss path",
+    agent: "opus", why: "Kraken order placement + confirmation + refusal. No naked positions under any code path.",
+    files: ["execution-engine.md", "src/execution/orders.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["safety-guard"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p2", id: "fee-slippage-model", title: "Implement the fee + slippage model",
+    agent: "sonnet", why: "Single formula: 0.26% taker per side + 0.05% slippage floor every order. FEE_THRESHOLD=0.62%.",
+    files: ["execution-engine.md", "constants.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p2", id: "kraken-ws-rest", title: "Wire Kraken WebSocket ingest + REST gap-fill",
+    agent: "opus", why: "WebSocket v2 + reconnect + REST backfill ≤12h + gap detection + is_interpolated for >12h.",
+    files: ["execution-engine.md", "src/execution/ingest.py"],
+    ecc: { before: { skills: ["exa-search", "tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p2", id: "position-reconciliation", title: "Implement position reconciliation on startup",
+    agent: "sonnet", why: "Specced compare-and-refuse: query GetOpenOrders + GetOpenPositions; Kraken is authoritative.",
+    files: ["execution-engine.md", "src/execution/reconcile.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p2", id: "stale-candle-halt", title: "Wire stale-candle halt + auto-close",
+    agent: "sonnet", why: "Two thresholds: 90s halt new trades, 5min auto-close all positions + Telegram + banner.",
+    files: ["execution-engine.md", "src/execution/staleness.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["safety-guard"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p2", id: "windows-credential-manager", title: "Set up secrets via Windows Credential Manager",
+    agent: "sonnet", why: "`keyring` wrapper + key-scope startup assertion (trade-only, no withdraw, no deposit).",
+    files: ["execution-engine.md", "src/execution/secrets.py"],
+    ecc: { during: { skills: ["security-review"] }, after: { agents: ["security-reviewer"] } } },
+  { phase: "p2", id: "telegram-alerter", title: "Wire Telegram alerter",
+    agent: "sonnet", why: "~20 lines of HTTP; threshold table locked in execution-engine.md.",
+    files: ["execution-engine.md", "src/execution/alerter.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+
+  // === Phase 3 / Trader + backtester ===
+  { phase: "p3", id: "stop-loss-formula", title: "Change the stop-loss formula",
+    agent: "sonnet", why: "Single constant in TraderConfig; net-PnL after fees identical in env/backtest/live.",
+    files: ["trader-rules.md", "constants.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p3", id: "trader-exit-rule", title: "Implement a new trader exit rule",
+    agent: "sonnet", why: "One tier in the 7-tier priority stack; tier number resolves all conflicts.",
+    files: ["trader-rules.md", "constants.py", "src/trader/exit_priority.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p3", id: "confidence-gate", title: "Implement the confidence gate",
+    agent: "sonnet", why: "Binary gate: spread > CONFIDENCE_THRESHOLD → allocation 0.",
+    files: ["trader-rules.md", "constants.py", "src/trader/sizing.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p3", id: "staleness-decay", title: "Implement the staleness decay",
+    agent: "sonnet", why: "Linear decay full → 50% over 30 days from retrain date.",
+    files: ["trader-rules.md", "src/trader/sizing.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p3", id: "quantile-spread-sizing", title: "Implement quantile-spread → position size formula",
+    agent: "sonnet", why: "spread = (q90 - q10) / |q50|; named in constants.py to prevent doc/code drift.",
+    files: ["trader-rules.md", "src/trader/sizing.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p3", id: "vectorized-backtester", title: "Build the vectorized backtester",
+    agent: "opus", why: "Must mirror execution rules + fee/slippage + 7-tier exit stack EXACTLY. Implement-once-import-everywhere rule.",
+    files: ["trader-rules.md", "execution-engine.md", "scripts/backtest.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["performance-optimizer"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p3", id: "run-backtest", title: "Run a backtest",
+    agent: "sonnet", why: "Script invocation; produces timestamped result file + W&B run + pass/fail vs Sortino gate.",
+    files: ["trader-rules.md", "scripts/backtest.py"],
+    ecc: { during: { skills: ["verification-loop"] } } },
+  { phase: "p3", id: "robustness-stress-gate", title: "Run the robustness + stress test gate",
+    agent: "opus", why: "Four sub-checks: feature ablation, σ=0.5×ATR noise injection, 2020/2022 sub-periods, system chaos.",
+    files: ["trader-rules.md", "scripts/robustness_gate.py"],
+    ecc: { during: { skills: ["verification-loop"] } } },
+  { phase: "p3", id: "chaos-test", title: "Run the chaos test (kill mid-trade, disconnect internet)",
+    agent: "sonnet", why: "Specced script: kill engine mid-trade, disconnect, restart under active position, verify watchdog.",
+    files: ["execution-engine.md", "scripts/chaos_test.py"],
+    ecc: { during: { skills: ["python-testing"] } } },
+
+  // === Phase 4 / Dashboard ===
+  { phase: "p4", id: "wire-panels", title: "Wire dashboard panels",
+    agent: "sonnet", why: "Vanilla JS + Lightweight Charts; bound to 127.0.0.1 only.",
+    files: ["dashboard.md", "src/dashboard/main.py"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["frontend-patterns"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p4", id: "predictor-accuracy-panel", title: "Add the predictor accuracy panel with q10/q90 overlay",
+    agent: "sonnet", why: "Single panel; reads q10/q50/q90 from WS payload; overlays realized.",
+    files: ["dashboard.md", "predictor-contract.md", "src/dashboard/main.py"],
+    ecc: { during: { skills: ["frontend-patterns"] }, after: { agents: ["e2e-runner"] } } },
+  { phase: "p4", id: "kill-switch-button", title: "Wire the kill-switch button (writes file-flag only)",
+    agent: "sonnet", why: "Double-confirm + atomic temp+rename. Same path as CLI. Capital safety never depends on dashboard.",
+    files: ["dashboard.md", "execution-engine.md"],
+    ecc: { before: { skills: ["tdd-workflow"] }, during: { skills: ["safety-guard"] }, after: { agents: ["e2e-runner"] } } },
+  { phase: "p4", id: "ws-payload-schema", title: "Wire WebSocket payload schema with predictor_hash + contract_version",
+    agent: "sonnet", why: "Versioned payload (v1.0); dashboard refuses prediction panels on contract mismatch.",
+    files: ["dashboard.md", "agent-config.md"],
+    ecc: { before: { skills: ["tdd-workflow"] }, after: { agents: ["python-reviewer"] } } },
+  { phase: "p4", id: "replay-scrubber", title: "Wire the replay scrubber against in-memory deque",
+    agent: "sonnet", why: "Deque cache for last N minutes; SQLite only for older history (avoids contention).",
+    files: ["dashboard.md", "src/dashboard/replay.py"],
+    ecc: { during: { skills: ["frontend-patterns"] }, after: { agents: ["e2e-runner"] } } },
+
+  // === Cross-phase ===
+  { phase: "pcross", id: "permutation-test", title: "Run the permutation test (pre-live gate)",
+    agent: "opus", why: "Statistical: null = random buy/sell signals at bot's trade frequency; p<0.05; distribution-free (BTC has fat tails).",
+    files: ["splits-validation.md", "scripts/permutation_test.py"],
+    ecc: { during: { skills: ["verification-loop"] } } },
+  { phase: "pcross", id: "walk-forward-12x1w", title: "Run the walk-forward 12×1w gate",
+    agent: "opus", why: "Median AND worst-week positive Sortino; regime-stratified trending AND ranging.",
+    files: ["splits-validation.md", "scripts/holdout_evaluator.py"],
+    ecc: { during: { skills: ["verification-loop"] } } },
+  { phase: "pcross", id: "agent-config-schema", title: "Update agent_config.json schema",
+    agent: "sonnet", why: "Single schema file; runtime config consumed by execution engine on startup.",
+    files: ["agent-config.md", "agent_config.json"],
+    ecc: { after: { agents: ["python-reviewer"] } } },
+  { phase: "pcross", id: "amend-decision", title: "Amend a locked decision",
+    agent: "sonnet", why: "Append-only edit; touch CHANGELOG in same commit (enforced pre-merge).",
+    files: ["DECISIONS.md", "CHANGELOG.md", "matching context card"],
+    ecc: { during: { skills: ["architecture-decision-records"] } } }
+];
+
+// ----- Rendering -----
+
+const STORAGE_PREFIX = "taskmap.v1.";
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function fileLi(path) {
+  const exists = FILE_EXISTS[path];
+  const planned = exists === false;
+  const cls = planned ? "planned" : "";
+  return `<li class="${cls}"><code>${escHtml(path)}</code></li>`;
+}
+
+function eccChips(group, kind) {
+  const items = (group && group[kind]) || [];
+  return items.map(name => {
+    const fullName = `everything-claude-code:${name}`;
+    const icon = kind === "skills" ? "🛠" : "🤖";
+    const cls = kind === "skills" ? "skill" : "agent";
+    return `<span class="ecc-chip ${cls}" title="${escHtml(fullName)}">${icon} ${escHtml(name)}</span>`;
+  }).join("");
+}
+
+function eccBlock(ecc) {
+  if (!ecc || (!ecc.before && !ecc.during && !ecc.after)) {
+    return `<div class="ecc-empty">No ECC components recommended for this task.</div>`;
+  }
+  const rows = [];
+  for (const when of ["before", "during", "after"]) {
+    const g = ecc[when];
+    if (!g) continue;
+    const skills = eccChips(g, "skills");
+    const agents = eccChips(g, "agents");
+    if (!skills && !agents) continue;
+    rows.push(`
+      <div class="ecc-when ${when}">${when}</div>
+      <div class="ecc-chips">${skills}${agents}</div>
+    `);
+  }
+  if (!rows.length) return `<div class="ecc-empty">No ECC components recommended for this task.</div>`;
+  return `<div class="ecc-block">${rows.join("")}</div>`;
+}
+
+function renderTask(t) {
+  const fullId = `${t.phase}-${t.id}`;
+  const agentChip = `<span class="chip chip-${t.agent}">${t.agent === "opus" ? "Opus" : "Sonnet"}</span>`;
+  const filesHtml = t.files.map(fileLi).join("");
+  return `
+    <article class="task" data-agent="${t.agent}" data-id="${fullId}">
+      <div class="task-row">
+        <label>
+          <input type="checkbox" data-id="${fullId}" />
+          <span class="task-title">${escHtml(t.title)}</span>
+        </label>
+        ${agentChip}
+        <button class="expand-btn" type="button" aria-expanded="false">Details</button>
+      </div>
+      <div class="details">
+        <p class="why">${escHtml(t.why)}</p>
+        <h4>Files to load first</h4>
+        <ul class="files">${filesHtml}</ul>
+        <h4>ECC skills / agents</h4>
+        ${eccBlock(t.ecc)}
+      </div>
+    </article>
+  `;
+}
+
+function renderPhases() {
+  const main = document.getElementById("phases");
+  const html = PHASES.map(p => {
+    const tasks = TASKS.filter(t => t.phase === p.id);
+    const taskHtml = tasks.map(renderTask).join("");
+    return `
+      <section class="phase" data-phase="${p.id}">
+        <h2 role="button" aria-expanded="true">
+          <span class="caret">▼</span>
+          <span>${escHtml(p.label)}</span>
+          <span class="count" data-phase-count="${p.id}">
+            <span class="done-n">0</span> / ${tasks.length} done
+          </span>
+        </h2>
+        <div class="tasks">${taskHtml}</div>
+      </section>
+    `;
+  }).join("");
+  main.innerHTML = html;
+}
+
+function applyStoredState() {
+  document.querySelectorAll('input[type="checkbox"][data-id]').forEach(box => {
+    const key = STORAGE_PREFIX + box.dataset.id;
+    if (localStorage.getItem(key) === "1") {
+      box.checked = true;
+      box.closest("article.task").classList.add("done");
+    }
+  });
+}
+
+function updateStats() {
+  const totals = { all: TASKS.length, done: 0 };
+  const perPhase = {};
+  PHASES.forEach(p => perPhase[p.id] = { total: 0, done: 0 });
+  TASKS.forEach(t => perPhase[t.phase].total += 1);
+
+  document.querySelectorAll('input[type="checkbox"][data-id]').forEach(box => {
+    const t = TASKS.find(x => `${x.phase}-${x.id}` === box.dataset.id);
+    if (!t) return;
+    if (box.checked) {
+      totals.done += 1;
+      perPhase[t.phase].done += 1;
+    }
+  });
+
+  const remaining = totals.all - totals.done;
+  document.getElementById("stats").innerHTML = `
+    <span class="pill"><strong>${totals.all}</strong> total</span>
+    <span class="pill done"><strong>${totals.done}</strong> done</span>
+    <span class="pill remaining"><strong>${remaining}</strong> remaining</span>
+  `;
+
+  PHASES.forEach(p => {
+    const node = document.querySelector(`[data-phase-count="${p.id}"]`);
+    if (!node) return;
+    node.innerHTML = `<span class="done-n">${perPhase[p.id].done}</span> / ${perPhase[p.id].total} done`;
+    const section = document.querySelector(`section.phase[data-phase="${p.id}"]`);
+    if (perPhase[p.id].done === perPhase[p.id].total && perPhase[p.id].total > 0) {
+      section.classList.add("all-done");
+    } else {
+      section.classList.remove("all-done");
+    }
+  });
+}
+
+function attachHandlers() {
+  document.querySelectorAll('section.phase > h2').forEach(h => {
+    h.addEventListener("click", () => {
+      const s = h.closest("section.phase");
+      s.classList.toggle("collapsed");
+      h.setAttribute("aria-expanded", String(!s.classList.contains("collapsed")));
+    });
+  });
+
+  document.querySelectorAll('article.task .expand-btn').forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const art = btn.closest("article.task");
+      const open = art.classList.toggle("expanded");
+      btn.setAttribute("aria-expanded", String(open));
+      btn.textContent = open ? "Hide" : "Details";
+    });
+  });
+
+  document.querySelectorAll('input[type="checkbox"][data-id]').forEach(box => {
+    box.addEventListener("change", () => {
+      const key = STORAGE_PREFIX + box.dataset.id;
+      if (box.checked) {
+        localStorage.setItem(key, "1");
+        box.closest("article.task").classList.add("done");
+      } else {
+        localStorage.removeItem(key);
+        box.closest("article.task").classList.remove("done");
+      }
+      updateStats();
+    });
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  renderPhases();
+  applyStoredState();
+  attachHandlers();
+  updateStats();
+});
+</script>
+</body>
+</html>
