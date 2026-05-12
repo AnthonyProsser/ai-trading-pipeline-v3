@@ -13,6 +13,12 @@ Format:
 
 ---
 
+## 2026-05-11 — Feature pipeline volume edge cases
+- data_config.vol_logret_floor: absent → `-10.0` (clip for `log(volume_t / volume_{t-1})` when `volume_t = 0` or the ratio underflows)
+- feature_pipeline.vol_t_minus_1_zero_handling: absent → impute `vol_change = 0` and emit a structured-log warning
+- Reason: `feature-pipeline.md` flagged `volume_t = 0 → log1p(-1) = -inf` as failure mode #2 without prescribing a clip value. Both decisions are required before the feature pipeline module (Phase 0 task 1) can be written without inserting magic numbers in `src/`.
+- Source: Phase 0 task 1 plan — feature pipeline module
+
 ## 2026-05-09 — UV as primary package manager
 - package_manager: absent → UV (`uv sync` / `uv add` / `uv run`)
 - build_backend: absent → hatchling

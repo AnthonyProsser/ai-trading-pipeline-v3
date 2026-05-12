@@ -21,6 +21,8 @@ Last consolidated: 2026-05-09
 - **horizon**: 15 steps direct multi-step. **Autoregressive iteration is banned.**
 - **lookback**: TBD via smoke-sweep [240, 720, 1440] before the long training run
 - **input_features**: 5 per candle — open log-return, high log-return, low log-return, close log-return, log1p(volume change)
+- **vol_logret_floor**: clip `log(volume_t / volume_{t-1})` to `-10.0` (≈ 22,000× volume drop) when `volume_t = 0` or the ratio underflows. Prevents `-inf` from entering the per-fold scaler.
+- **vol_t_minus_1_zero_handling**: if `volume_{t-1} = 0`, set `vol_change = 0` (treat as "no information") and emit a structured-log warning. The validator separately surfaces extended zero-volume runs.
 - **scaling**: per-fold MinMaxScaler with strict fit-window assertion; rolling features computed sequentially before scaler updates
 - **loss**: Pinball (quantile) + direction penalty, λ ∈ [1.5, 2.0]; FEE_THRESHOLD subtracted from predicted per-step PnL inside the loss so the model learns net-of-fee profitable moves
 - **geometry_enforcement**: O/H/L/C consistency (`H ≥ max(O,C)`, `L ≤ min(O,C)`) enforced at every inference step, not only in the rollout sampler — including in any Trader-side mock harness
