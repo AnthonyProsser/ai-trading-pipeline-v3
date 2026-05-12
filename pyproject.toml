@@ -14,7 +14,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv]
-# Temporary while `src/` is not present: skip project editable install during `uv sync`.
+# Temporary while packaging/editable-install wiring is not configured yet.
 # Remove this once packaging is wired and the project package should be installed.
 package = false
 
