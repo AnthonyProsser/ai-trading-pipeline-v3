@@ -49,7 +49,7 @@ The Trader consumes predictor output and computes:
 spread = (q90 - q10) / |q50|        # per-dimension; trader uses close dim by default
 ```
 
-This is the explicit input to the confidence gate (`trader-rules.md`). The formula must appear in code (`src/trader/sizing.py`) and in `constants.py` as `CONFIDENCE_THRESHOLD`, never only in prose.
+This is the explicit input to the confidence gate (`trader-rules.md`). `constants.py` must define `CONFIDENCE_THRESHOLD`, and when the Trader module lands this formula must be implemented in code (planned path: `src/trader/sizing.py`) rather than living only in prose.
 
 ## Patch size and token count
 
