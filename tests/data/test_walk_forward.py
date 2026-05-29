@@ -33,7 +33,7 @@ def test_stride_equals_validation_block() -> None:
 
 def test_validation_slices_non_overlapping_and_contiguous() -> None:
     folds = make_folds(500_000)
-    for a, b in zip(folds, folds[1:]):
+    for a, b in zip(folds, folds[1:], strict=False):
         assert a.val_end == b.val_start
 
 
