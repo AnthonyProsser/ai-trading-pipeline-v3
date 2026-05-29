@@ -5,6 +5,7 @@ description = "Solo paper-trading BTC bot — predictor / trader / dashboard."
 requires-python = ">=3.10"
 dependencies = [
     "gdown>=5.0",
+    "numpy>=2.2.6",
 ]
 
 [build-system]
@@ -18,11 +19,12 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Repo root on sys.path so tests import both `src.*` packages and the root `constants`.
+pythonpath = ["."]
 
 [tool.mypy]
 strict = true
-# "src" joins this list when Phase 0 creates it — mypy errors on a missing path.
-files = ["scripts"]
+files = ["scripts", "src"]
 
 [tool.ruff]
 line-length = 100
