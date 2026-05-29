@@ -21,4 +21,25 @@ testpaths = ["tests"]
 
 [tool.mypy]
 strict = true
+# "src" joins this list when Phase 0 creates it — mypy errors on a missing path.
 files = ["scripts"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# DTZ (flake8-datetimez) enforces the "all timestamps tz-aware UTC" hard rule mechanically.
+select = ["E", "F", "I", "UP", "B", "SIM", "DTZ"]
+
+[tool.ruff.lint.per-file-ignores]
+# Root scripts bootstrap sys.path before importing the root `constants` module:
+# imports below the path setup (E402) and the resulting block order (I001) are intentional.
+"scripts/ingest_kraken_history.py" = ["E402", "I001"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+    "pytest>=9.0.3",
+    "ruff>=0.15.15",
+]

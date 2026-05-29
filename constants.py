@@ -12,7 +12,6 @@ consumer that forgets to handle them fails loudly rather than silently
 defaulting. Resolution gates are documented in DECISIONS.md and CLAUDE.md §9.
 """
 from dataclasses import dataclass
-from typing import Optional
 
 
 # ============================================================
@@ -97,11 +96,11 @@ class TraderConfig:
     # Confidence gate
     # spread = (q90 - q10) / |q50|
     # Above this, force allocation to zero. Calibrate empirically before paper.
-    CONFIDENCE_THRESHOLD: Optional[float] = None  # TBD before paper trading
+    CONFIDENCE_THRESHOLD: float | None = None  # TBD before paper trading
 
     # Exit priority stack
     SIGNAL_REVERSAL_CANDLES: int = 3  # consecutive opposite signals to exit
-    TIME_BASED_EXIT_MINUTES: Optional[int] = None  # TBD if used; lowest priority
+    TIME_BASED_EXIT_MINUTES: int | None = None  # TBD if used; lowest priority
 
     # Predictor staleness decay
     STALENESS_DECAY_FLOOR: float = 0.50  # multiplier at retrain_date + 30d
