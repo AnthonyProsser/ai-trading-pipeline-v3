@@ -39,6 +39,15 @@ class DataConfig:
 
     # Feature pipeline
     NUM_INPUT_FEATURES: int = 5  # OHLC log-returns + log1p volume change
+    FEATURE_NAMES: tuple[str, ...] = (
+        "open_logret",
+        "high_logret",
+        "low_logret",
+        "close_logret",
+        "vol_change",
+    )
+    # vol_change is +/-inf when current/prior volume is 0; degenerate value filled neutral.
+    VOL_CHANGE_DEGENERATE_FILL: float = 0.0
     LOOKBACK: int = 1_440  # SWEEP [240, 720, 1440] before long training run
 
     # Validator
