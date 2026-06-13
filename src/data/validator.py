@@ -68,6 +68,10 @@ def validate_candles(
     minute = np.timedelta64(1, "m")
     ts = timestamps.astype("datetime64[m]")
     ohlcv = np.asarray(ohlcv, dtype=np.float64)
+    if ts.shape[0] != ohlcv.shape[0]:
+        raise ValueError(f"timestamps and ohlcv must have the same length: {ts.shape[0]} != {ohlcv.shape[0]}")
+    if ohlcv.ndim != 2 or ohlcv.shape[1] != len(OhlcvCol):
+        raise ValueError(f"ohlcv must have shape (N, {len(OhlcvCol)}), got {ohlcv.shape}")
     n_input = int(ts.shape[0])
 
     # Sort by time (stable, so a duplicated minute keeps input order before we drop it).
