@@ -16,8 +16,11 @@ class ManifestError(Exception):
 
 
 def sha256_file(path: str | Path) -> str:
+    h = hashlib.sha256()
     with open(path, "rb") as fh:
-        return hashlib.file_digest(fh, "sha256").hexdigest()
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def build_manifest(artifacts: dict[str, str | Path]) -> dict[str, str]:
