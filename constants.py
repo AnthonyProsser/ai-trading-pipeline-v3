@@ -49,6 +49,11 @@ class DataConfig:
     # vol_change is +/-inf when current/prior volume is 0; degenerate value filled neutral.
     VOL_CHANGE_DEGENERATE_FILL: float = 0.0
     LOOKBACK: int = 1_440  # SWEEP [240, 720, 1440] before long training run
+    # Floor for log(volume_t / volume_{t-1}). When volume_t = 0 or the ratio is
+    # tiny, the raw log goes to -inf; clip to this finite floor so the scaler
+    # has a stable input distribution. e^-10 ≈ 4.5e-5× — well below any
+    # observable Kraken BTC/USD 1-minute volume drop.
+    VOL_LOGRET_FLOOR: float = -10.0
 
     # Validator
     GAP_INTERPOLATE_MAX_HOURS: int = 12  # gaps > this trigger is_interpolated=True

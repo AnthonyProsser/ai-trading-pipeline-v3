@@ -54,11 +54,13 @@ def test_vol_change_doubling_and_constant() -> None:
 
 
 def test_degenerate_volume_is_finite() -> None:
-    # volume_t = 0 -> log1p(-1) = -inf ; volume_{t-1} = 0 -> +inf : both must be handled
+    # volume_t = 0 -> log -inf -> clipped to floor ; volume_{t-1} = 0 -> "no information"
     vol_idx = DATA.FEATURE_NAMES.index("vol_change")
     ohlcv = _ohlcv([[10, 11, 9, 10, 100], [10, 11, 9, 10, 0], [10, 11, 9, 10, 50]])
     feats = compute_features(ohlcv)
     assert np.isfinite(feats[:, vol_idx]).all()
+    assert feats[0, vol_idx] == DATA.VOL_LOGRET_FLOOR
+    assert feats[1, vol_idx] == DATA.VOL_CHANGE_DEGENERATE_FILL
 
 
 def test_no_nan_or_inf_in_output() -> None:
