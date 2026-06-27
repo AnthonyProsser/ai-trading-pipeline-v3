@@ -71,6 +71,11 @@ class PredictorConfig:
     QUANTILES: tuple[float, float, float] = (0.10, 0.50, 0.90)
     NUM_OUTPUT_DIMS: int = 5  # OHLCV
 
+    # Rollout geometry enforcement (predictor-contract.md §"Geometry enforcement")
+    # H >= max(O,C) and L <= min(O,C) per emitted step and quantile; a violating
+    # stochastic sample is redrawn up to this many times before a deterministic clamp.
+    GEOMETRY_RESAMPLE_CAP: int = 5
+
     # Loss
     DIRECTION_PENALTY_LAMBDA: float = 1.75  # range [1.5, 2.0]
 

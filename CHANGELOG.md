@@ -13,6 +13,11 @@ Format:
 
 ---
 
+## 2026-06-27 — Predictor geometry-enforcement constant
+- predictor_config.GEOMETRY_RESAMPLE_CAP: absent → `5` (max resample attempts before a deterministic clamp when a sampled candle violates `H >= max(O,C)` / `L <= min(O,C)`)
+- Reason: relocate the "resampled up to 5×" literal from `predictor-contract.md` §"Geometry enforcement" into `constants.py` so `src/predictor/rollout.py` carries no bare magic number (single-source-of-truth policy). No decision value changed; the 5× cap was already specified in the contract card.
+- Source: Phase 1 build — rollout geometry enforcement (deliverable #1)
+
 ## 2026-06-27 — Remove Telegram; add Training TUI
 - alerts: "Telegram bot (push to phone) + structured JSON logs + dashboard color states" → "sound/beep (winsound.Beep) + structured JSON logs + dashboard color states"
 - stale_candle_auto_close: "alert via Telegram + dashboard banner" → "alert via sound/beep + dashboard banner"
