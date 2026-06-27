@@ -76,7 +76,13 @@ Solo paper-trading BTC bot. Three components: **Predictor** (PatchTST encoder, 1
 
 ### Repo state
 
-**Build phase (pre-training gate).** The design and scaffolding have landed on `main`: `DECISIONS.md`, `INDEX.md`, `constants.py`, the 8 context cards, `pyproject.toml`, and `uv.lock`. `scripts/` holds `ingest_kraken_history.py` only. **`src/` and `tests/` do not yet exist** — they are being built phase by phase (Phase 0 Data → Phase 1 Predictor code) toward a green smoke run. Flag the gap and ask before running anything that needs an unbuilt module.
+**Build phase (pre-training gate).** Building phase by phase toward a green smoke run.
+
+- **Phase 0 (Data)** — COMPLETE, merged to `main`. `src/data/` (feature_pipeline, scaler, walk_forward, validator, manifest) and matching `tests/data/` are fully green.
+- **Phase 1 (Predictor)** — IN PROGRESS on `phase-1-predictor`. `src/predictor/early_stopping.py` and `loss.py` exist and are green (3 training-bug regression tests pass). Remaining Phase 1 modules (`rollout.py`, the PatchTST encoder/model, `scripts/train_predictor.py`, `scripts/deploy_predictor.py`) are not yet built — flag and ask before running anything that needs them.
+- **Phases 2–4** — not started. `src/execution/`, `src/trader/`, `src/dashboard/` do not exist.
+
+Scripts other than `ingest_kraken_history.py` (e.g. `train_predictor.py`, `backtest.py`) are planned deliverables — they do not exist yet.
 
 Read first, every coding session, in this order: `DECISIONS.md` → `INDEX.md` → `constants.py` → the relevant context card named by the matching INDEX row. They are the source of truth for architectural decisions, task → file mapping, and frozen magic numbers respectively.
 
@@ -107,6 +113,39 @@ Read first, every coding session, in this order: `DECISIONS.md` → `INDEX.md` �
 - **One branch per phase:** `phase-XY` off `developer`; `developer` → `main` at phase exit. Never commit to `main` directly.
 - **Any `DECISIONS.md` change requires a `CHANGELOG.md` entry in the same commit.**
 - **Flag every unspecced decision.** If a task requires a value not in `DECISIONS.md` or `constants.py`, stop and ask. Do not "use a reasonable default" — this aligns with Karpathy §1.
+
+### Custom agents — mandatory trigger rules
+
+Three project-specific subagents live in `.claude/agents/`. They are read-only auditors; invoke them via the Agent tool at the triggers below. Do not skip them.
+
+| Agent | When to invoke |
+|---|---|
+| `decisions-auditor` | After implementing or editing **any** module under `src/` or `scripts/`. Also whenever a constant, formula, threshold, schema, or I/O shape appears in a diff. |
+| `leakage-checker` | Before any Phase 0 exit. On **any** change to `src/data/` (feature pipeline, scaler, walk-forward, validator). Pre-merge on PRs touching `src/data/`. |
+| `test-enforcer` | At the **start** of every implementation task (confirms test-first ordering) and at **phase completion** (confirms mirror completeness). |
+
+### ECC integrations
+
+The `everything-claude-code` plugin is installed. Use these capabilities where they apply:
+
+**Agents (invoke via Agent tool):**
+| Agent | When to use |
+|---|---|
+| `everything-claude-code:python-reviewer` | After writing or editing any Python source under `src/` — catches type-hint gaps, Pythonic issues, security, and PEP 8 drift. Run after `decisions-auditor`. |
+| `everything-claude-code:pytorch-build-resolver` | When a PyTorch training run or inference crashes — shape mismatches, device errors, gradient issues, DataLoader failures. |
+| `everything-claude-code:security-reviewer` | When touching `src/execution/` (API keys, WebSocket, order submission) or any code that reads external input. |
+| `everything-claude-code:performance-optimizer` | When training is slow or a DataLoader is bottlenecked — before concluding hardware is the constraint. |
+| `everything-claude-code:tdd-guide` | When writing new `src/` modules — enforces the tests-first mandate and 80%+ coverage. |
+| `everything-claude-code:docs-lookup` | When needing current API docs for PyTorch, pandas, FastAPI, or Kraken SDK — fetches live docs rather than relying on stale training knowledge. |
+
+**Skills (invoke via Skill tool):**
+| Skill | When to use |
+|---|---|
+| `everything-claude-code:pytorch-patterns` | When designing or debugging the PatchTST encoder, quantile loss, training loop, or rollout. |
+| `everything-claude-code:python-review` | Quick per-file Python review (lighter-weight alternative to the full agent). |
+| `everything-claude-code:tdd` | TDD workflow guidance when implementing a new phase module. |
+| `everything-claude-code:security-review` | Security scan on `src/execution/` changes. |
+| `code-review` (`/code-review`) | After any implementation diff — reviews the current branch changes for correctness bugs and simplification opportunities. |
 
 ### Commands (when toolchain lands)
 
