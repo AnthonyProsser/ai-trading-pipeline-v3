@@ -114,13 +114,30 @@ def test_train_one_fold_finite_separated_losses() -> None:
     assert metrics.steps > 0
 
 
-def test_make_run_tag_includes_all_components() -> None:
+def test_make_run_tag_orders_components_per_spec() -> None:
+    # predictor-training.md: "Run tag = git SHA + scaler hash + constants.py hash + fold ID".
     from src.predictor.training import make_run_tag
 
     tag = make_run_tag(
         git_sha="abcdef1", constants_sha="0011223344", scaler_sha="aabbccddee", fold_id=7
     )
-    assert "abcdef1" in tag
-    assert "0011223344"[:8] in tag
-    assert "aabbccddee"[:8] in tag
-    assert "fold7" in tag
+    assert tag.startswith("abcdef1")
+    assert "aabbccdd" in tag and "00112233" in tag
+    assert tag.index("aabbccdd") < tag.index("00112233")  # scaler hash precedes constants hash
+    assert tag.endswith("fold7")
+
+
+def test_train_one_fold_rejects_non_positive_epochs() -> None:
+    pytest.importorskip("torch")
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, train_one_fold
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=16
+    )
+    model = PatchTST(lookback=_LOOKBACK)
+    with pytest.raises(ValueError, match="max_epochs"):
+        train_one_fold(model, scaler, train_loader, val_loader, device="cpu", max_epochs=0)
