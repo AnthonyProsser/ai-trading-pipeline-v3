@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import pickle
 import subprocess
 import sys
 from pathlib import Path
@@ -54,16 +53,22 @@ def git_short_sha() -> str:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+            cwd=REPO_ROOT, capture_output=True, text=True, check=True, timeout=5,
         )
         return out.stdout.strip() or "nogit"
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
         return "nogit"
 
 
 def scaler_sha(scaler: PerFoldMinMaxScaler) -> str:
-    """Hash the fitted scaler's fold statistics (part of the run tag / manifest scope)."""
-    return hashlib.sha256(pickle.dumps((scaler.data_min_, scaler.data_max_))).hexdigest()
+    """Stable hash of the fitted scaler's fold statistics (part of the run tag).
+
+    Hashes the raw array buffers (not pickle) so the tag is reproducible across
+    Python versions.
+    """
+    if scaler.data_min_ is None or scaler.data_max_ is None:
+        raise ValueError("scaler_sha requires a fitted scaler")
+    return hashlib.sha256(scaler.data_min_.tobytes() + scaler.data_max_.tobytes()).hexdigest()
 
 
 def synthetic_candles(n: int, seed: int) -> CandleArrays:
@@ -144,6 +149,8 @@ def make_logger(mode: str, project: str, run_tag: str) -> LogFn:
         )
         return to_stdout
     run = wandb.init(project=project, name=run_tag, mode=mode)
+    if run is None:  # some wandb configs return None; fall back to stdout
+        return to_stdout
 
     def to_both(payload: dict[str, object]) -> None:
         to_stdout(payload)

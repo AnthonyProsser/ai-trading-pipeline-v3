@@ -148,7 +148,7 @@ def _evaluate(
             total += float(comp.total)
             batches += 1
     if batches == 0:
-        return 0.0, 0.0, 0.0
+        raise RuntimeError("val_loader yielded no batches — fold or batch_size misconfigured")
     return pinball / batches, direction / batches, total / batches
 
 
@@ -166,6 +166,8 @@ def train_one_fold(
     """Train one fold on the supplied loaders. Receives the (already-fitted) per-fold
     scaler -- it never builds one. Uses AdamW + warmup-cosine, AMP (bf16) on CUDA,
     grad clipping, predictor_loss, and EarlyStopper; raises on a non-finite loss."""
+    if max_epochs < 1:
+        raise ValueError(f"max_epochs must be >= 1, got {max_epochs}")
     if scaler.data_min_ is None:
         raise ValueError(
             "train_one_fold received an unfitted scaler; build_fold_loaders must fit it"
@@ -244,5 +246,5 @@ def train_one_fold(
 
 
 def make_run_tag(*, git_sha: str, constants_sha: str, scaler_sha: str, fold_id: int) -> str:
-    """W&B run tag = git SHA + constants.py hash + scaler hash + fold id."""
-    return f"{git_sha}-c{constants_sha[:8]}-s{scaler_sha[:8]}-fold{fold_id}"
+    """W&B run tag = git SHA + scaler hash + constants.py hash + fold id (spec order)."""
+    return f"{git_sha}-s{scaler_sha[:8]}-c{constants_sha[:8]}-fold{fold_id}"
