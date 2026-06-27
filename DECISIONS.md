@@ -12,6 +12,8 @@ Last consolidated: 2026-05-09
 - **build_backend**: hatchling (UV-native; setuptools removed — project ships no importable package, only scripts)
 - **lock_file**: `uv.lock` committed to version control for reproducible installs (`.gitignore` pre-configured to track it)
 - **uv_package_install_mode**: `[tool.uv] package = false` (temporary while `src/`/package module does not exist; remove once packaging is wired so `uv sync` installs the project package)
+- **python_version**: pinned to `3.13` via `.python-version`. `requires-python` stays `>=3.10`, but the interpreter is pinned because PyTorch cu124 wheels ship for cp310–cp313 only (no cp314 build exists yet).
+- **ml_framework**: PyTorch `2.6.0+cu124` (CUDA 12.4 build for the RTX 4060 / sm_89). Installed from the explicit `pytorch-cu124` index (`https://download.pytorch.org/whl/cu124`) pinned via `[tool.uv.sources]`. Predictor loss/model code targets this build; CUDA verified available on the 4060.
 
 ## Predictor
 
