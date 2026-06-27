@@ -13,6 +13,19 @@ Format:
 
 ---
 
+## 2026-06-27 — Remove Telegram; add Training TUI
+- alerts: "Telegram bot (push to phone) + structured JSON logs + dashboard color states" → "sound/beep (winsound.Beep) + structured JSON logs + dashboard color states"
+- stale_candle_auto_close: "alert via Telegram + dashboard banner" → "alert via sound/beep + dashboard banner"
+- stop_loss_confirmation_required: "auto-close any partial fill + Telegram alert" → "auto-close any partial fill + sound/beep alert"
+- training_ui_stack: absent → Textual (Python TUI)
+- training_ui_controls: absent → start / stop (graceful checkpoint save) / save (checkpoint now)
+- training_ui_stop_behavior: absent → signal-based; closing TUI does not kill training process
+- training_ui_metrics: absent → fold index, epoch, train/val loss, epoch/fold/total run ETA
+- training_ui_alerts: absent → in-app Textual banner + winsound.Beep + structured JSON log
+- training_ui_export: absent → per-fold JSON record appended to `training_metrics.json` (path in `PredictorConfig`); schema: fold index, losses, DA, quantile coverage, duration, hyperparams snapshot
+- Reason: user directive — no Telegram; replace with a lightweight Textual TUI for training management and a JSON export handoff for Claude optimization review.
+- Source: user directive (Phase 1 training tooling)
+
 ## 2026-06-27 — PyTorch toolchain (Phase 1 predictor)
 - Toolchain.python_version: absent → `3.13` (pinned via `.python-version`)
 - Toolchain.ml_framework: absent → PyTorch `2.6.0+cu124` (CUDA 12.4, RTX 4060 / sm_89), from the explicit `pytorch-cu124` index pinned in `[tool.uv.sources]`

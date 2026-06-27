@@ -41,6 +41,8 @@ The lookup table for every coding session. Find the row that matches the task, l
 | Implement geometry enforcement (`H ≥ max(O,C)`, `L ≤ min(O,C)`) at every inference step | `predictor-contract.md`, `src/predictor/rollout.py` |
 | Run retrain deploy gates | `predictor-contract.md`, `scripts/deploy_predictor.py` |
 | Deploy a new predictor checkpoint | `agent-config.md`, `scripts/deploy_predictor.py`, `agent_config.json` |
+| Build the Training TUI (start/stop/save controls, live metrics, fold ETA) | `predictor-training.md`, `src/training_ui/app.py` |
+| Wire fold-completion export to `training_metrics.json` | `predictor-training.md`, `constants.py`, `src/training_ui/exporter.py` |
 
 ## Phase 2 / Execution engine + environment
 
@@ -56,7 +58,7 @@ The lookup table for every coding session. Find the row that matches the task, l
 | Implement position reconciliation on startup | `execution-engine.md`, `src/execution/reconcile.py` |
 | Wire stale-candle halt + auto-close | `execution-engine.md`, `src/execution/staleness.py` |
 | Set up secrets via Windows Credential Manager | `execution-engine.md`, `src/execution/secrets.py` |
-| Wire Telegram alerter | `execution-engine.md`, `src/execution/alerter.py` |
+| Wire sound/beep + log alerter | `execution-engine.md`, `src/execution/alerter.py` |
 
 ## Phase 3 / Trader + backtester
 
