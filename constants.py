@@ -12,7 +12,6 @@ consumer that forgets to handle them fails loudly rather than silently
 defaulting. Resolution gates are documented in DECISIONS.md and CLAUDE.md §9.
 """
 from dataclasses import dataclass
-from typing import Optional
 
 
 # ============================================================
@@ -40,6 +39,15 @@ class DataConfig:
 
     # Feature pipeline
     NUM_INPUT_FEATURES: int = 5  # OHLC log-returns + log1p volume change
+    FEATURE_NAMES: tuple[str, ...] = (
+        "open_logret",
+        "high_logret",
+        "low_logret",
+        "close_logret",
+        "vol_change",
+    )
+    # vol_change is +/-inf when current/prior volume is 0; degenerate value filled neutral.
+    VOL_CHANGE_DEGENERATE_FILL: float = 0.0
     LOOKBACK: int = 1_440  # SWEEP [240, 720, 1440] before long training run
     # Floor for log(volume_t / volume_{t-1}). When volume_t = 0 or the ratio is
     # tiny, the raw log goes to -inf; clip to this finite floor so the scaler
@@ -102,11 +110,11 @@ class TraderConfig:
     # Confidence gate
     # spread = (q90 - q10) / |q50|
     # Above this, force allocation to zero. Calibrate empirically before paper.
-    CONFIDENCE_THRESHOLD: Optional[float] = None  # TBD before paper trading
+    CONFIDENCE_THRESHOLD: float | None = None  # TBD before paper trading
 
     # Exit priority stack
     SIGNAL_REVERSAL_CANDLES: int = 3  # consecutive opposite signals to exit
-    TIME_BASED_EXIT_MINUTES: Optional[int] = None  # TBD if used; lowest priority
+    TIME_BASED_EXIT_MINUTES: int | None = None  # TBD if used; lowest priority
 
     # Predictor staleness decay
     STALENESS_DECAY_FLOOR: float = 0.50  # multiplier at retrain_date + 30d

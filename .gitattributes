@@ -1,0 +1,2 @@
+# Keep the shell pre-commit hook LF so git's bundled sh executes it on Windows checkouts.
+.githooks/pre-commit text eol=lf

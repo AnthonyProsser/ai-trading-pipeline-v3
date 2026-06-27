@@ -76,9 +76,9 @@ Solo paper-trading BTC bot. Three components: **Predictor** (PatchTST encoder, 1
 
 ### Repo state
 
-**Design phase.** `src/`, `tests/`, `scripts/`, and build config (`pyproject.toml`) do not yet exist. Don't attempt to run commands that require them — flag the gap and ask.
+**Build phase (pre-training gate).** The design and scaffolding have landed on `main`: `DECISIONS.md`, `INDEX.md`, `constants.py`, the 8 context cards, `pyproject.toml`, and `uv.lock`. `scripts/` holds `ingest_kraken_history.py` only. **`src/` and `tests/` do not yet exist** — they are being built phase by phase (Phase 0 Data → Phase 1 Predictor code) toward a green smoke run. Flag the gap and ask before running anything that needs an unbuilt module.
 
-When `DECISIONS.md`, `INDEX.md`, and `constants.py` land on this branch, read them first (in that order) before any coding session. They are the source of truth for architectural decisions, task → file mapping, and frozen magic numbers respectively.
+Read first, every coding session, in this order: `DECISIONS.md` → `INDEX.md` → `constants.py` → the relevant context card named by the matching INDEX row. They are the source of truth for architectural decisions, task → file mapping, and frozen magic numbers respectively.
 
 ### Tech stack
 

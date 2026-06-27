@@ -17,7 +17,7 @@ All five must pass through the scaler. The earlier "no scaler" framing reference
 ## Scaler contract — non-negotiable
 
 - **Per-fold MinMaxScaler.** Never global. The scaler is fit on the train slice of one walk-forward fold and used unchanged for that fold's val + test slices.
-- **Strict fit-window assertion.** The scaler object stores its fit-window timestamps. Any `transform()` call passing data with a timestamp outside `[fit_start, fit_end]` raises immediately. This catches "next-fold leakage" by construction, not by convention.
+- **Strict fit-window assertion.** Min/max statistics are computed on the **train slice only**, but the scaler stores the **whole fold's** timestamp bounds `[fold_start, fold_end]` (train through test) as its allowed transform window — so the same scaler can transform that fold's val + test slices, while a `transform()` call passing any timestamp outside `[fold_start, fold_end]` raises immediately. This catches "next-fold leakage" by construction (a later fold's data can never be scaled with this fold's scaler), not by convention.
 - **Forward-only ordering.** Inside any one fold: rolling features (if added later) computed on candle `t` must use only `[..., t-1]`. The scaler then updates. Then the model sees the scaled value for `t`. Never reverse this order.
 - **Scaler PKL goes into the SHA256 manifest.** Scaler drift between training and inference silently rewrites the model's input distribution.
 
