@@ -139,7 +139,11 @@ def write_agent_config(
 
 def run(args: argparse.Namespace) -> int:
     model = PatchTST(lookback=args.lookback)
-    state = torch.load(args.checkpoint, map_location="cpu")
+    # weights_only=True avoids arbitrary-code execution from a crafted .pt. Accept either a
+    # bare state_dict or a wrapper {"state_dict": ...}; the save convention is pinned once
+    # the training run gains checkpointing.
+    loaded = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
+    state = loaded["state_dict"] if isinstance(loaded, dict) and "state_dict" in loaded else loaded
     model.load_state_dict(state)
     with open(args.scaler, "rb") as fh:
         scaler: PerFoldMinMaxScaler = pickle.load(fh)
