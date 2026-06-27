@@ -13,6 +13,36 @@ Format:
 
 ---
 
+## 2026-06-27 — Bind encoder activation + norm_first to constants
+- predictor_config.ACTIVATION: absent → `"gelu"`
+- predictor_config.NORM_FIRST: absent → `True`
+- Reason: decisions-auditor flagged `activation="gelu"` / `norm_first=True` as bare literals in `src/predictor/model.py`. Because the SHA256 manifest hashes `constants.py` but not `model.py`, behaviour-defining architecture choices must live in `constants.py` to be manifest-bound (else a post-training change silently alters the architecture without invalidating the manifest). Same commit also adds a final `LayerNorm` to the pre-LN encoder (python-reviewer: the last block's output was otherwise unnormalised before the head).
+- Source: Phase 1 build — decisions-auditor + python-reviewer review of model.py
+
+## 2026-06-27 — Predictor architecture + training hyperparameters
+- predictor_config PatchTST architecture: absent → `PATCH_EMBED_MODE="channel_mixing"`, `D_MODEL=128`, `N_HEADS=8`, `N_LAYERS=3`, `D_FF=256`, `DROPOUT=0.1`
+- predictor_config training loop: absent → `LEARNING_RATE=3e-4`, `WEIGHT_DECAY=1e-2`, `WARMUP_FRAC=0.05`, `GRAD_CLIP_NORM=1.0`, `MAX_EPOCHS=100`, `USE_AMP=True`, `SEED=0`, `SMOKE_BATCH_SIZE=32`, `SMOKE_BATCH_SIZE_FALLBACK=16`, `WANDB_PROJECT="btc-bot-v3-predictor"`
+- Reason: `predictor-training.md` §"Architecture"/"Smoke run" left every PatchTST hyperparameter and optimizer setting unspecced (flagged in the Phase 1 brief as STOP-and-ask). User approved the recommended config: an ~3M-param channel-mixing PatchTST sized for the RTX 4060 8GB at batch 32 / lookback 1440, AdamW + cosine-with-warmup, AMP (bf16). Channel-mixing chosen over PatchTST's channel-independent default because OHLCV are facets of one instrument (intra-candle cross-feature interaction matters) and it matches the card's "90 tokens" framing.
+- Source: Phase 1 build — user directive (AskUserQuestion approval, "whatever you recommend")
+
+## 2026-06-27 — Predictor geometry-enforcement constant
+- predictor_config.GEOMETRY_RESAMPLE_CAP: absent → `5` (max resample attempts before a deterministic clamp when a sampled candle violates `H >= max(O,C)` / `L <= min(O,C)`)
+- Reason: relocate the "resampled up to 5×" literal from `predictor-contract.md` §"Geometry enforcement" into `constants.py` so `src/predictor/rollout.py` carries no bare magic number (single-source-of-truth policy). No decision value changed; the 5× cap was already specified in the contract card.
+- Source: Phase 1 build — rollout geometry enforcement (deliverable #1)
+
+## 2026-06-27 — Remove Telegram; add Training TUI
+- alerts: "Telegram bot (push to phone) + structured JSON logs + dashboard color states" → "sound/beep (winsound.Beep) + structured JSON logs + dashboard color states"
+- stale_candle_auto_close: "alert via Telegram + dashboard banner" → "alert via sound/beep + dashboard banner"
+- stop_loss_confirmation_required: "auto-close any partial fill + Telegram alert" → "auto-close any partial fill + sound/beep alert"
+- training_ui_stack: absent → Textual (Python TUI)
+- training_ui_controls: absent → start / stop (graceful checkpoint save) / save (checkpoint now)
+- training_ui_stop_behavior: absent → signal-based; closing TUI does not kill training process
+- training_ui_metrics: absent → fold index, epoch, train/val loss, epoch/fold/total run ETA
+- training_ui_alerts: absent → in-app Textual banner + winsound.Beep + structured JSON log
+- training_ui_export: absent → per-fold JSON record appended to `training_metrics.json` (path in `PredictorConfig`); schema: fold index, losses, DA, quantile coverage, duration, hyperparams snapshot
+- Reason: user directive — no Telegram; replace with a lightweight Textual TUI for training management and a JSON export handoff for Claude optimization review.
+- Source: user directive (Phase 1 training tooling)
+
 ## 2026-06-27 — PyTorch toolchain (Phase 1 predictor)
 - Toolchain.python_version: absent → `3.13` (pinned via `.python-version`)
 - Toolchain.ml_framework: absent → PyTorch `2.6.0+cu124` (CUDA 12.4, RTX 4060 / sm_89), from the explicit `pytorch-cu124` index pinned in `[tool.uv.sources]`

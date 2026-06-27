@@ -55,11 +55,11 @@ Last consolidated: 2026-05-09
 - **fee_model**: Kraken base-tier taker 0.26% per side. Slippage floor 0.05% on every market order (not conditional). Round-trip drag `FEE_THRESHOLD = 0.62%`, defined in `ExecutionConfig` and consumed by both training loss and DA evaluation gate.
 - **spread_model**: `spread = 0.0005 + 0.0001 × atr_ratio`, where `atr_ratio = current_ATR / rolling_median_ATR` over the last 1440 candles
 - **stale_candle_halt**: at >90s, halt new trades
-- **stale_candle_auto_close**: at 5 minutes, auto-close all open positions; alert via Telegram + dashboard banner
+- **stale_candle_auto_close**: at 5 minutes, auto-close all open positions; alert via sound/beep + dashboard banner
 - **stop_loss_exchange_native**: mandatory close order at Kraken on every entry. Engine refuses the order entirely if stop-loss cannot be placed or is invalid. **No naked positions on the book under any code path.**
-- **stop_loss_confirmation_required**: position not marked open until exchange confirms stop-loss order. If confirmation does not arrive within N seconds, auto-close any partial fill + Telegram alert.
+- **stop_loss_confirmation_required**: position not marked open until exchange confirms stop-loss order. If confirmation does not arrive within N seconds, auto-close any partial fill + sound/beep alert.
 - **secrets**: Windows Credential Manager via `keyring`. `.env` reserved for non-secret config only.
-- **alerts**: Telegram bot (push to phone) + structured JSON logs + dashboard color states
+- **alerts**: sound/beep (winsound.Beep) + structured JSON logs + dashboard color states
 - **network_exposure**: FastAPI bound to `127.0.0.1` only. Remote access via SSH tunnel.
 - **paper_live_toggle**: `ExecutionBackend` abstract class. `PaperBackend` and `LiveBackend` are sibling implementations. Parity contract test mandatory before live.
 - **api_ingest**: Kraken WebSocket v2 OHLC for real-time, REST `GetOHLCData` for gap backfill (≤12h gaps). Gaps >12h trigger `is_interpolated=True` forward-fill.
@@ -78,6 +78,15 @@ Last consolidated: 2026-05-09
 - **kill_criteria_K7_winrate**: < 40% × 3 days — alert
 - **kill_criteria_K8_stale_candle**: 5 min — auto-shutdown, no override
 - **kill_criteria_K9_latency**: > 55s × 3 cycles — alert
+
+## Training UI
+
+- **training_ui_stack**: Textual (Python TUI; no browser). Runs in one terminal window during training. Dependency added via `uv add textual`.
+- **training_ui_controls**: start (launch training subprocess), stop (graceful checkpoint save + clean exit), save (write checkpoint now without stopping)
+- **training_ui_stop_behavior**: stop/save signals sent via threading.Event or subprocess signal; training loop catches signal, writes checkpoint, exits cleanly. Closing the TUI does not kill the training process.
+- **training_ui_metrics**: live display of fold index, epoch, train loss (pinball + direction), val loss, epoch ETA, fold ETA, total run ETA
+- **training_ui_alerts**: in-app Textual notification banner + winsound.Beep on fold complete, training error, or early-stop trigger; structured JSON log (same log sink as rest of pipeline)
+- **training_ui_export**: on each fold completion, append a fold summary record to `training_metrics.json` (path in `PredictorConfig`). This file is the handoff artifact for Claude optimization review. Schema: fold index, train/val loss, DA, quantile coverage, duration seconds, hyperparams snapshot.
 
 ## Cross-cutting
 

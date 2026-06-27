@@ -67,12 +67,47 @@ class PredictorConfig:
     HORIZON: int = 15  # direct multi-step; autoregression banned
     PATCH_SIZE: int = 16  # PatchTST: 1440 / 16 = 90 tokens
 
+    # PatchTST encoder architecture (predictor-training.md §"Architecture").
+    # channel_mixing: each (PATCH_SIZE x NUM_INPUT_FEATURES) patch -> one token, so
+    # cross-feature (OHLCV) interaction is modelled within a candle. ~3M params at the
+    # values below; comfortable on an RTX 4060 (8GB) at batch 32 / lookback 1440.
+    PATCH_EMBED_MODE: str = "channel_mixing"
+    D_MODEL: int = 128
+    N_HEADS: int = 8  # head_dim = D_MODEL // N_HEADS = 16
+    N_LAYERS: int = 3  # encoder blocks
+    D_FF: int = 256  # feed-forward dim (2 x D_MODEL)
+    DROPOUT: float = 0.1
+    # Behaviour-defining encoder choices live here (not in model.py) so the SHA256
+    # manifest, which hashes constants.py, binds them: a post-training change would
+    # otherwise silently alter the architecture without invalidating the manifest.
+    ACTIVATION: str = "gelu"
+    NORM_FIRST: bool = True  # pre-LN; the encoder also applies a final LayerNorm
+
     # Output head: q10, q50, q90 per OHLCV dimension per future step
     QUANTILES: tuple[float, float, float] = (0.10, 0.50, 0.90)
     NUM_OUTPUT_DIMS: int = 5  # OHLCV
 
+    # Rollout geometry enforcement (predictor-contract.md §"Geometry enforcement")
+    # H >= max(O,C) and L <= min(O,C) per emitted step and quantile; a violating
+    # stochastic sample is redrawn up to this many times before a deterministic clamp.
+    GEOMETRY_RESAMPLE_CAP: int = 5
+
     # Loss
     DIRECTION_PENALTY_LAMBDA: float = 1.75  # range [1.5, 2.0]
+
+    # Training loop (predictor-training.md §"Smoke run"). AdamW + cosine schedule with
+    # linear warmup; AMP (bf16) on the 4060. MAX_EPOCHS is an upper bound — the
+    # EarlyStopper (patience below) terminates earlier in practice.
+    LEARNING_RATE: float = 3e-4
+    WEIGHT_DECAY: float = 1e-2
+    WARMUP_FRAC: float = 0.05  # linear warmup over the first 5% of total steps
+    GRAD_CLIP_NORM: float = 1.0
+    MAX_EPOCHS: int = 100
+    USE_AMP: bool = True
+    SEED: int = 0
+    SMOKE_BATCH_SIZE: int = 32  # smoke default; drop to fallback on OOM
+    SMOKE_BATCH_SIZE_FALLBACK: int = 16  # Azure A100 decision point if this still OOMs
+    WANDB_PROJECT: str = "btc-bot-v3-predictor"
 
     # Bug regression tests (must be exposed for tests to assert against)
     EARLY_STOPPING_PATIENCE: int = 10

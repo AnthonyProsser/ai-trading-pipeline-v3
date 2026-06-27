@@ -35,6 +35,11 @@ pythonpath = ["."]
 strict = true
 files = ["scripts", "src"]
 
+# wandb ships no type stubs; the training script imports it lazily (offline/online modes).
+[[tool.mypy.overrides]]
+module = ["wandb", "wandb.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
@@ -47,6 +52,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "DTZ"]
 # Root scripts bootstrap sys.path before importing the root `constants` module:
 # imports below the path setup (E402) and the resulting block order (I001) are intentional.
 "scripts/ingest_kraken_history.py" = ["E402", "I001"]
+"scripts/train_predictor.py" = ["E402", "I001"]
+"scripts/deploy_predictor.py" = ["E402", "I001"]
 
 [dependency-groups]
 dev = [

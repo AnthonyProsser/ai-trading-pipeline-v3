@@ -13,7 +13,7 @@ Per cycle (target 60s):
 5. Reconcile desired vs. actual position; emit orders
 6. Update SQLite + dashboard WebSocket payload
 
-Timing budget: `CYCLE_WARNING_SECONDS = 45` (Telegram alert), `CYCLE_HARD_SECONDS = 55` (escalate; K9 fires after 3 consecutive breaches). 55 is below 60 because alert delivery itself takes some time.
+Timing budget: `CYCLE_WARNING_SECONDS = 45` (sound/beep + log alert), `CYCLE_HARD_SECONDS = 55` (escalate; K9 fires after 3 consecutive breaches). 55 is below 60 because alert delivery itself takes some time.
 
 ## Kill switch — file-flag + watchdog
 
@@ -59,8 +59,8 @@ Where `atr_ratio = current_ATR / rolling_median_ATR` over the last 1440 candles.
 
 ## Stale candle handling
 
-- `>90s` since last candle close: halt new trades. Banner on dashboard. Telegram alert.
-- `≥5min` since last candle close: auto-close all open positions. K8 fires (auto-shutdown, no override).
+- `>90s` since last candle close: halt new trades. Banner on dashboard. Sound/beep + log alert.
+- `≥5min` since last candle close: auto-close all open positions. K8 fires (auto-shutdown, no override). Sound/beep + dashboard banner.
 
 Unmanaged open position during outage was the largest unspecified failure mode in v2.
 
@@ -68,7 +68,7 @@ Unmanaged open position during outage was the largest unspecified failure mode i
 
 Every entry order places an attached close order at Kraken. The execution engine **refuses the order entirely if the stop-loss cannot be placed or is invalid**. There are no naked positions on the book under any code path.
 
-A position is not marked open in local state until Kraken confirms the stop-loss order. If confirmation does not arrive within `STOP_LOSS_CONFIRMATION_TIMEOUT_SECONDS` (5s), any partial fill is auto-closed and Telegram alerts.
+A position is not marked open in local state until Kraken confirms the stop-loss order. If confirmation does not arrive within `STOP_LOSS_CONFIRMATION_TIMEOUT_SECONDS` (5s), any partial fill is auto-closed and a sound/beep + log alert fires.
 
 ## API ingest
 
@@ -108,7 +108,9 @@ Verified at startup AND on every weight reload. Manifest covers weights + scaler
 
 Checkpoints, scaler, `agent_config.json` synced to OneDrive/Google Drive after every write (rclone or filewatcher). Single-machine deployment otherwise = single point of failure for months of training.
 
-## Alert thresholds (Telegram)
+## Alert thresholds
+
+Delivery: sound/beep (winsound.Beep) + structured JSON log + dashboard color state. No Telegram.
 
 | Trigger | Severity |
 |---|---|
