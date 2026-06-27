@@ -110,6 +110,18 @@ def test_enforce_geometry_does_not_mutate_input() -> None:
     assert torch.equal(bad, snapshot)  # returns a new tensor; no in-place edit
 
 
+def test_enforce_geometry_raises_on_non_finite_input() -> None:
+    # A NaN/inf candle is a physically impossible candle: torch.maximum(NaN, x) -> NaN
+    # would pass the clamp silently and reach the trader. enforce_geometry must fail loudly.
+    torch = pytest.importorskip("torch")
+    from src.predictor.rollout import enforce_geometry
+
+    bad = torch.zeros(_PRED_SHAPE)
+    bad[0, 0, OhlcvCol.HIGH, _Q90] = float("nan")
+    with pytest.raises(ValueError, match="non-finite"):
+        enforce_geometry(bad)
+
+
 def test_resample_redraws_up_to_cap_then_clamps() -> None:
     torch = pytest.importorskip("torch")
     from src.predictor.rollout import resample_until_valid
