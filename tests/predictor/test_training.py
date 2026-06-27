@@ -29,7 +29,8 @@ def _synthetic(n: int) -> tuple[np.ndarray, np.ndarray]:
     """Random-walk-ish log-return features + aligned 1-minute timestamps."""
     rng = np.random.default_rng(PREDICTOR.SEED)
     feats = (rng.standard_normal((n, _F)) * 0.01).astype(np.float64)
-    ts = np.arange(n, dtype="datetime64[m]")  # minutes; scaler compares in [m] units
+    base = np.datetime64("2020-01-01T00:00")  # minute precision; scaler compares in [m]
+    ts = base + np.arange(n).astype("timedelta64[m]")
     return feats, ts
 
 
