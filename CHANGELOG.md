@@ -13,6 +13,12 @@ Format:
 
 ---
 
+## 2026-06-27 — Predictor architecture + training hyperparameters
+- predictor_config PatchTST architecture: absent → `PATCH_EMBED_MODE="channel_mixing"`, `D_MODEL=128`, `N_HEADS=8`, `N_LAYERS=3`, `D_FF=256`, `DROPOUT=0.1`
+- predictor_config training loop: absent → `LEARNING_RATE=3e-4`, `WEIGHT_DECAY=1e-2`, `WARMUP_FRAC=0.05`, `GRAD_CLIP_NORM=1.0`, `MAX_EPOCHS=100`, `USE_AMP=True`, `SEED=0`, `SMOKE_BATCH_SIZE=32`, `SMOKE_BATCH_SIZE_FALLBACK=16`, `WANDB_PROJECT="btc-bot-v3-predictor"`
+- Reason: `predictor-training.md` §"Architecture"/"Smoke run" left every PatchTST hyperparameter and optimizer setting unspecced (flagged in the Phase 1 brief as STOP-and-ask). User approved the recommended config: an ~3M-param channel-mixing PatchTST sized for the RTX 4060 8GB at batch 32 / lookback 1440, AdamW + cosine-with-warmup, AMP (bf16). Channel-mixing chosen over PatchTST's channel-independent default because OHLCV are facets of one instrument (intra-candle cross-feature interaction matters) and it matches the card's "90 tokens" framing.
+- Source: Phase 1 build — user directive (AskUserQuestion approval, "whatever you recommend")
+
 ## 2026-06-27 — Predictor geometry-enforcement constant
 - predictor_config.GEOMETRY_RESAMPLE_CAP: absent → `5` (max resample attempts before a deterministic clamp when a sampled candle violates `H >= max(O,C)` / `L <= min(O,C)`)
 - Reason: relocate the "resampled up to 5×" literal from `predictor-contract.md` §"Geometry enforcement" into `constants.py` so `src/predictor/rollout.py` carries no bare magic number (single-source-of-truth policy). No decision value changed; the 5× cap was already specified in the contract card.
