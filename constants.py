@@ -77,6 +77,11 @@ class PredictorConfig:
     N_LAYERS: int = 3  # encoder blocks
     D_FF: int = 256  # feed-forward dim (2 x D_MODEL)
     DROPOUT: float = 0.1
+    # Behaviour-defining encoder choices live here (not in model.py) so the SHA256
+    # manifest, which hashes constants.py, binds them: a post-training change would
+    # otherwise silently alter the architecture without invalidating the manifest.
+    ACTIVATION: str = "gelu"
+    NORM_FIRST: bool = True  # pre-LN; the encoder also applies a final LayerNorm
 
     # Output head: q10, q50, q90 per OHLCV dimension per future step
     QUANTILES: tuple[float, float, float] = (0.10, 0.50, 0.90)

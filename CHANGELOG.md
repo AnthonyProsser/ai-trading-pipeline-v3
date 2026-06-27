@@ -13,6 +13,12 @@ Format:
 
 ---
 
+## 2026-06-27 — Bind encoder activation + norm_first to constants
+- predictor_config.ACTIVATION: absent → `"gelu"`
+- predictor_config.NORM_FIRST: absent → `True`
+- Reason: decisions-auditor flagged `activation="gelu"` / `norm_first=True` as bare literals in `src/predictor/model.py`. Because the SHA256 manifest hashes `constants.py` but not `model.py`, behaviour-defining architecture choices must live in `constants.py` to be manifest-bound (else a post-training change silently alters the architecture without invalidating the manifest). Same commit also adds a final `LayerNorm` to the pre-LN encoder (python-reviewer: the last block's output was otherwise unnormalised before the head).
+- Source: Phase 1 build — decisions-auditor + python-reviewer review of model.py
+
 ## 2026-06-27 — Predictor architecture + training hyperparameters
 - predictor_config PatchTST architecture: absent → `PATCH_EMBED_MODE="channel_mixing"`, `D_MODEL=128`, `N_HEADS=8`, `N_LAYERS=3`, `D_FF=256`, `DROPOUT=0.1`
 - predictor_config training loop: absent → `LEARNING_RATE=3e-4`, `WEIGHT_DECAY=1e-2`, `WARMUP_FRAC=0.05`, `GRAD_CLIP_NORM=1.0`, `MAX_EPOCHS=100`, `USE_AMP=True`, `SEED=0`, `SMOKE_BATCH_SIZE=32`, `SMOKE_BATCH_SIZE_FALLBACK=16`, `WANDB_PROJECT="btc-bot-v3-predictor"`

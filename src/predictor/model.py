@@ -53,12 +53,19 @@ class PatchTST(nn.Module):
             nhead=PREDICTOR.N_HEADS,
             dim_feedforward=PREDICTOR.D_FF,
             dropout=PREDICTOR.DROPOUT,
-            activation="gelu",
+            activation=PREDICTOR.ACTIVATION,
             batch_first=True,
-            norm_first=True,  # pre-LN: steadier gradients, fewer NaN blow-ups
+            norm_first=PREDICTOR.NORM_FIRST,  # pre-LN: steadier gradients, fewer NaN blow-ups
         )
+        # norm=LayerNorm gives the pre-LN stack its final normalisation, so the head sees
+        # a normalised residual stream (without it the last block's output is unnormalised).
+        # enable_nested_tensor=False is a correctness guard: with batch_first and no mask it
+        # avoids a version-dependent NestedTensor return that would break the later reshape.
         self.encoder = nn.TransformerEncoder(
-            encoder_layer, num_layers=PREDICTOR.N_LAYERS, enable_nested_tensor=False
+            encoder_layer,
+            num_layers=PREDICTOR.N_LAYERS,
+            norm=nn.LayerNorm(PREDICTOR.D_MODEL),
+            enable_nested_tensor=False,
         )
         self.head = nn.Linear(
             self.num_tokens * PREDICTOR.D_MODEL, PREDICTOR.HORIZON * self.out_per_step
