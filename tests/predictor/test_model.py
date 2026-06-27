@@ -49,7 +49,7 @@ def test_single_forward_pass_is_deterministic() -> None:
 
 
 def test_lookback_must_be_divisible_by_patch_size() -> None:
-    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch")
     from src.predictor.model import PatchTST
 
     with pytest.raises(ValueError, match="divisible"):
@@ -70,7 +70,7 @@ def test_sweep_lookbacks_produce_contract_shape(lookback: int) -> None:
 
 
 def test_num_tokens_is_lookback_over_patch_size() -> None:
-    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch")
     from src.predictor.model import PatchTST
 
     model = PatchTST(lookback=DATA.LOOKBACK)
