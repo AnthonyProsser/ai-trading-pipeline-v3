@@ -79,10 +79,10 @@ Solo paper-trading BTC bot. Three components: **Predictor** (PatchTST encoder, 1
 **Build phase (pre-training gate).** Building phase by phase toward a green smoke run.
 
 - **Phase 0 (Data)** — COMPLETE, merged to `main`. `src/data/` (feature_pipeline, scaler, walk_forward, validator, manifest) and matching `tests/data/` are fully green.
-- **Phase 1 (Predictor)** — IN PROGRESS on `phase-1-predictor`. `src/predictor/early_stopping.py` and `loss.py` exist and are green (3 training-bug regression tests pass). Remaining Phase 1 modules (`rollout.py`, the PatchTST encoder/model, `scripts/train_predictor.py`, `scripts/deploy_predictor.py`) are not yet built — flag and ask before running anything that needs them.
+- **Phase 1 (Predictor)** — modules COMPLETE on `phase-1-predictor` (PR pending). All built tests-first and green (68 tests): `early_stopping.py`, `loss.py`, `rollout.py` (geometry enforcement), `model.py` (channel-mixing PatchTST), `training.py` (`build_fold_loaders` + `train_one_fold`), `deploy_gates.py`; plus `scripts/train_predictor.py` (`--smoke`/`--synthetic`) and `scripts/deploy_predictor.py`. The **synthetic** GPU smoke passed on the 4060 (lookback 1440, batch 32, finite loss, no OOM/NaN). The **real-data** smoke is still pending: `data/raw/BTCUSD_1.csv` is absent (Google Drive ingest rate-limited; re-run `scripts/ingest_kraken_history.py` after cooldown, then `uv run python scripts/train_predictor.py --smoke`). `deploy_predictor.py` runs end-to-end only once a trained checkpoint + locked test set exist. W&B is not installed (offline-capable flag wired; `uv add wandb` to enable).
 - **Phases 2–4** — not started. `src/execution/`, `src/trader/`, `src/dashboard/` do not exist.
 
-Scripts other than `ingest_kraken_history.py` (e.g. `train_predictor.py`, `backtest.py`) are planned deliverables — they do not exist yet.
+`scripts/ingest_kraken_history.py`, `scripts/train_predictor.py`, and `scripts/deploy_predictor.py` exist. Other scripts (e.g. `backtest.py`, `holdout_evaluator.py`, `permutation_test.py`) are planned deliverables — they do not exist yet.
 
 Read first, every coding session, in this order: `DECISIONS.md` → `INDEX.md` → `constants.py` → the relevant context card named by the matching INDEX row. They are the source of truth for architectural decisions, task → file mapping, and frozen magic numbers respectively.
 
