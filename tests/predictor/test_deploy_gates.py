@@ -69,7 +69,7 @@ def test_directional_accuracy_only_over_tradeable_predictions() -> None:
 
 
 def test_directional_accuracy_nan_when_no_tradeable_predictions() -> None:
-    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch")
     from src.predictor.deploy_gates import directional_accuracy
 
     pred, target = _blank(3)
