@@ -7,6 +7,7 @@ dependencies = [
     "gdown>=5.0",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
+    "torch>=2.6.0",
 ]
 
 [build-system]
@@ -17,6 +18,13 @@ build-backend = "hatchling.build"
 # Temporary while packaging/editable-install wiring is not configured yet.
 # Remove this once packaging is wired and the project package should be installed.
 package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

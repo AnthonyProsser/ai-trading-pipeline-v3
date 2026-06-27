@@ -13,6 +13,12 @@ Format:
 
 ---
 
+## 2026-06-27 — PyTorch toolchain (Phase 1 predictor)
+- Toolchain.python_version: absent → `3.13` (pinned via `.python-version`)
+- Toolchain.ml_framework: absent → PyTorch `2.6.0+cu124` (CUDA 12.4, RTX 4060 / sm_89), from the explicit `pytorch-cu124` index pinned in `[tool.uv.sources]`
+- Reason: Phase 1 predictor loss requires PyTorch (autograd). The active venv was Python 3.14, for which no torch cu124 wheel exists (wheels ship cp310–cp313 only), so the interpreter is pinned to 3.13. User selected the CUDA-now build to match the 4060 for the eventual smoke run + training. `requires-python` unchanged (`>=3.10`); numpy resync'd to 2.2.6 under torch's constraint (still satisfies `>=2.2.6`).
+- Source: Phase 1 build / user directive
+
 ## 2026-05-29 — Phase 0 data pipeline constants
 - data_config.FEATURE_NAMES: absent → ("open_logret", "high_logret", "low_logret", "close_logret", "vol_change")
 - data_config.VOL_CHANGE_DEGENERATE_FILL: absent → 0.0
