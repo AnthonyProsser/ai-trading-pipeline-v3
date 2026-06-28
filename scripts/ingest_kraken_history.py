@@ -5,10 +5,16 @@ CSV present. Override with --force.
 
 Defaults pull master_q4/BTCUSD_1.csv (1-minute OHLCVT) from the user's
 Google Drive archive and write it to data/raw/BTCUSD_1.csv at the repo root.
+
+Google Drive rate-limits unauthenticated downloads of large public files.
+This script syncs your Chrome Google cookies to gdown's cache before each
+download so the request is authenticated, bypassing the quota error.
+Chrome must be installed; the cookie sync is best-effort (non-fatal on failure).
 """
 from __future__ import annotations
 
 import argparse
+import http.cookiejar
 import sys
 import zipfile
 from contextlib import suppress
@@ -36,6 +42,59 @@ def temp_path(path: Path) -> Path:
 def remove_if_exists(path: Path) -> None:
     with suppress(FileNotFoundError):
         path.unlink()
+
+
+_GDOWN_COOKIE_PATH = Path.home() / ".cache" / "gdown" / "cookies.txt"
+_MANUAL_COOKIE_INSTRUCTIONS = f"""
+  Manual one-time fix:
+    1. Install the Chrome extension "Get cookies.txt LOCALLY"
+       (search the Chrome Web Store)
+    2. Open https://drive.google.com in Chrome while logged into your Google account
+    3. Click the extension icon and export cookies for the current tab
+    4. Save the exported file to: {_GDOWN_COOKIE_PATH}
+    5. Re-run this script — gdown will pick up the cookies automatically
+"""
+
+
+def _write_cookies_to_gdown(cookies: "http.cookiejar.CookieJar") -> None:
+    _GDOWN_COOKIE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    jar = http.cookiejar.MozillaCookieJar(str(_GDOWN_COOKIE_PATH))
+    for cookie in cookies:
+        jar.set_cookie(cookie)
+    jar.save(ignore_discard=True, ignore_expires=True)
+
+
+def sync_browser_cookies() -> None:
+    """Write browser Google cookies to gdown's Netscape cookie cache.
+
+    gdown reads ~/.cache/gdown/cookies.txt before every download when
+    use_cookies=True (the default). Authenticated requests bypass Google
+    Drive's public-file download quota.
+
+    Tries Chrome first, then Firefox. Chrome 127+ uses App-Bound Encryption
+    which blocks automated cookie extraction on Windows — Firefox is the
+    reliable fallback. Non-fatal: prints instructions and continues if both fail.
+    """
+    try:
+        import browser_cookie3  # type: ignore[import-untyped]
+    except ImportError:
+        print("[cookies-warn] browser-cookie3 not installed; skipping cookie sync")
+        return
+
+    for browser_name, loader in (
+        ("Chrome", lambda: browser_cookie3.chrome(domain_name=".google.com")),
+        ("Firefox", lambda: browser_cookie3.firefox(domain_name=".google.com")),
+    ):
+        try:
+            _write_cookies_to_gdown(loader())
+            print(f"[cookies] {browser_name} Google cookies synced to gdown cache")
+            return
+        except Exception as exc:  # noqa: BLE001
+            print(f"[cookies-warn] {browser_name}: {exc}")
+
+    print("[cookies-warn] Could not extract cookies from any browser.")
+    print("[cookies-warn] Download will proceed without authentication and may fail.")
+    print(_MANUAL_COOKIE_INSTRUCTIONS)
 
 
 def download_zip(gdrive_id: str, dest: Path, force: bool) -> Path:
@@ -110,6 +169,7 @@ def main() -> int:
     args = ap.parse_args()
 
     zip_path = args.cache_dir / cache_zip_name(args.gdrive_id)
+    sync_browser_cookies()
     download_zip(args.gdrive_id, zip_path, args.force)
     out_path = extract_member(zip_path, args.inner_path, args.out_dir, args.force)
     print(f"[done] {out_path}")

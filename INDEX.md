@@ -41,8 +41,8 @@ The lookup table for every coding session. Find the row that matches the task, l
 | Implement geometry enforcement (`H ≥ max(O,C)`, `L ≤ min(O,C)`) at every inference step | `predictor-contract.md`, `src/predictor/rollout.py` |
 | Run retrain deploy gates | `predictor-contract.md`, `scripts/deploy_predictor.py` |
 | Deploy a new predictor checkpoint | `agent-config.md`, `scripts/deploy_predictor.py`, `agent_config.json` |
-| Build the Training TUI (start/stop/save controls, live metrics, fold ETA) | `predictor-training.md`, `src/training_ui/app.py` |
-| Wire fold-completion export to `training_metrics.json` | `predictor-training.md`, `constants.py`, `src/training_ui/exporter.py` |
+| Build the Training Dashboard (browser: start/stop/save, live metrics, fold ETA) | `training-dashboard.md`, `src/training_ui/app.py` |
+| Wire fold-completion export to `training_metrics.json` | `training-dashboard.md`, `constants.py`, `src/training_ui/exporter.py` |
 
 ## Phase 2 / Execution engine + environment
 
@@ -74,15 +74,30 @@ The lookup table for every coding session. Find the row that matches the task, l
 | Run the robustness & stress test gate | `trader-rules.md`, `scripts/robustness_gate.py` |
 | Run the chaos test (kill mid-trade, disconnect internet) | `execution-engine.md`, `scripts/chaos_test.py` |
 
-## Phase 4 / Dashboard
+## Phase 4 / Dashboards
+
+### Training Dashboard (`src/training_ui/`)
 
 | Task | Files |
 |---|---|
-| Wire dashboard panels | `dashboard.md`, `src/dashboard/main.py` |
-| Add the predictor accuracy panel with q10/q90 overlay | `dashboard.md`, `predictor-contract.md`, `src/dashboard/main.py` |
-| Wire the kill-switch button (writes file-flag only) | `dashboard.md`, `execution-engine.md` |
+| Training Dashboard: first-run data gate (drag-and-drop + Drive link) | `training-dashboard.md`, `src/training_ui/setup_router.py` |
+| Wire training controls (start/stop/save) | `training-dashboard.md`, `src/training_ui/app.py` |
+| Wire live metrics stream (fold index, loss, ETAs) | `training-dashboard.md`, `src/training_ui/app.py` |
+| Wire fold history table from `training_metrics.json` | `training-dashboard.md`, `src/training_ui/app.py` |
+
+### Trading Dashboard (`src/dashboard/`)
+
+| Task | Files |
+|---|---|
+| Wire core trading panels (candles, predictor accuracy, position, health, kill, replay) | `dashboard.md`, `src/dashboard/main.py` |
+| Add predictor accuracy panel with q10/q90 overlay + on-chart insights | `dashboard.md`, `predictor-contract.md`, `src/dashboard/main.py` |
+| Wire kill-switch button (writes file-flag only) | `dashboard.md`, `execution-engine.md` |
 | Wire WebSocket payload schema with `predictor_hash` + `predictor_contract_version` | `dashboard.md`, `agent-config.md` |
-| Wire the replay scrubber against in-memory deque | `dashboard.md`, `src/dashboard/replay.py` |
+| Wire replay scrubber against in-memory deque | `dashboard.md`, `src/dashboard/replay.py` |
+| Build performance metrics + regime analysis panels | `dashboard.md`, `src/dashboard/metrics_router.py` |
+| Build fee drag + model management + kill criteria panels | `dashboard.md`, `src/dashboard/metrics_router.py` |
+| Build data collection panel (status + collect trigger) | `dashboard.md`, `execution-engine.md`, `src/dashboard/data_router.py` |
+| Build AI analysis panel (LLM report + on-chart insights) | `dashboard.md`, `src/dashboard/analysis_router.py`, `src/dashboard/analysis_prompt.py` |
 
 ## Cross-phase
 

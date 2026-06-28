@@ -1,6 +1,6 @@
 ---
 name: decisions-auditor
-description: Read-only auditor that verifies new/changed code matches the locked spec. Invoke after implementing or editing any module under src/ or scripts/, and whenever a constant, formula, threshold, schema, or I/O shape appears in a diff. Confirms the code agrees with DECISIONS.md, the relevant docs/context card, and constants.py — and that no magic number is hardcoded outside constants.py.
+description: Read-only auditor that verifies new/changed code matches the locked spec. Invoke after implementing or editing any module under src/ or scripts/, and whenever a constant, formula, threshold, schema, or I/O shape appears in a diff. Confirms the code agrees with DECISIONS.md, the relevant context card, and constants.py — and that no magic number is hardcoded outside constants.py.
 tools: Read, Grep, Glob
 model: sonnet
 ---

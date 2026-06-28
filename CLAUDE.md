@@ -110,7 +110,7 @@ Read first, every coding session, in this order: `DECISIONS.md` → `INDEX.md` �
 - **Exchange-native stop-loss is mandatory.** Execution refuses any order whose stop cannot be placed at Kraken. No naked positions under any code path.
 - **SHA256 manifest verified on every weight read.** Covers weights + scaler + `constants.py`.
 - **`asyncio` only in `src/execution/`.** Predictor and trader code stays synchronous.
-- **One branch per phase:** `phase-XY` off `developer`; `developer` → `main` at phase exit. Never commit to `main` directly.
+- **One branch per phase:** `phase-XY` off `main`; merged to `main` at phase exit. Never commit to `main` directly.
 - **Any `DECISIONS.md` change requires a `CHANGELOG.md` entry in the same commit.**
 - **Flag every unspecced decision.** If a task requires a value not in `DECISIONS.md` or `constants.py`, stop and ask. Do not "use a reasonable default" — this aligns with Karpathy §1.
 

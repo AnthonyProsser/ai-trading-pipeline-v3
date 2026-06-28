@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Solo paper-trading BTC bot — predictor / trader / dashboard."
 requires-python = ">=3.10"
 dependencies = [
+    "browser-cookie3>=0.20.1",
     "gdown>=5.0",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
