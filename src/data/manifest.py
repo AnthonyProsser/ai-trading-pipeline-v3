@@ -37,6 +37,9 @@ def load_manifest(path: str | Path) -> dict[str, str]:
 
 
 def verify_manifest(manifest: dict[str, str], artifacts: dict[str, str | Path]) -> None:
+    uncovered = set(artifacts) - set(manifest)
+    if uncovered:
+        raise ManifestError(f"artifacts not covered by the manifest: {sorted(uncovered)}")
     for name, expected in manifest.items():
         if name not in artifacts:
             raise ManifestError(f"manifest artifact '{name}' was not provided for verification")

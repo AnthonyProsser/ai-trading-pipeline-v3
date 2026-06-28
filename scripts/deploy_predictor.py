@@ -32,7 +32,7 @@ if str(REPO_ROOT) not in sys.path:
 import torch
 from torch.utils.data import DataLoader
 
-from constants import DATA, PREDICTOR
+from constants import DATA, EXECUTION, PREDICTOR
 from src.data.feature_pipeline import compute_features
 from src.data.manifest import build_manifest, sha256_file, write_manifest
 from src.data.scaler import PerFoldMinMaxScaler
@@ -41,11 +41,6 @@ from src.predictor.deploy_gates import DeployGateResult, evaluate_deploy_gates
 from src.predictor.model import PatchTST
 from src.predictor.rollout import enforce_geometry
 from src.predictor.training import WindowDataset
-
-# Bumps on any structural change to agent_config.json; deploy refuses to overwrite a
-# config whose schema_version differs (surfaces silent schema drift). See agent-config.md.
-SCHEMA_VERSION = "1.0"
-
 
 def load_eval_candles(path: Path) -> tuple[npt.NDArray[np.datetime64], npt.NDArray[np.float64]]:
     arr: npt.NDArray[np.float64] = np.loadtxt(
@@ -71,9 +66,7 @@ def gather_predictions(
     """
     if scaler.data_min_ is None or scaler.data_max_ is None:
         raise ValueError("deploy requires a fitted scaler")
-    span = scaler.data_max_ - scaler.data_min_
-    span[span == 0.0] = 1.0
-    x_scaled = ((features - scaler.data_min_) / span).astype(np.float32)
+    x_scaled = scaler.transform_inference(features).astype(np.float32)
 
     dataset = WindowDataset(
         torch.from_numpy(x_scaled),
@@ -108,16 +101,17 @@ def write_agent_config(
     """Merge the predictor section into agent_config.json (preserving other sections).
 
     Refuses to overwrite a config whose schema_version differs from this script's."""
+    schema_version = EXECUTION.AGENT_CONFIG_SCHEMA_VERSION
     if config_path.exists():
         config: dict[str, object] = json.loads(config_path.read_text(encoding="utf-8"))
         existing = config.get("schema_version")
-        if existing != SCHEMA_VERSION:
+        if existing != schema_version:
             raise SystemExit(
                 f"[stop] {config_path} schema_version {existing!r} != expected "
-                f"{SCHEMA_VERSION!r}; refusing to write (schema drift)."
+                f"{schema_version!r}; refusing to write (schema drift)."
             )
     else:
-        config = {"schema_version": SCHEMA_VERSION}
+        config = {"schema_version": schema_version}
 
     config["predictor"] = {
         "checkpoint_path": str(checkpoint),

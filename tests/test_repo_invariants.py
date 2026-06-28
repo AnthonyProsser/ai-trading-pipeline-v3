@@ -22,7 +22,7 @@ def test_no_test_locked_reference_in_src() -> None:
 
 
 def test_no_naive_datetime_in_src() -> None:
-    naive = re.compile(r"datetime\.(now|utcnow)\(\s*\)")
+    naive = re.compile(r"datetime\.(now|utcnow)\(\s*(?:None|tz\s*=\s*None)?\s*\)")
     bad = [f for f in _src_files() if naive.search(f.read_text(encoding="utf-8"))]
     assert not bad, f"src/ must use tz-aware UTC datetimes only: {bad}"
 
