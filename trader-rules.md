@@ -52,7 +52,7 @@ Identical formula in environment, backtester, and live execution. Any divergence
 
 ## Exit priority interaction with exchange-native stop
 
-The exchange-native stop-loss order at Kraken (`docs/context/execution-engine.md`) is **redundant with** the local tier-2 hard stop, not a replacement. The local stop fires first under normal operation; the exchange-native stop is the failsafe for local-machine outage.
+The exchange-native stop-loss order at Kraken (`execution-engine.md`) is **redundant with** the local tier-2 hard stop, not a replacement. The local stop fires first under normal operation; the exchange-native stop is the failsafe for local-machine outage.
 
 ## Robustness gate (pre-paper-trading)
 

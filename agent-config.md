@@ -35,7 +35,6 @@ Runtime configuration that varies between deployments / checkpoints / data refre
     "backend": "PaperBackend" | "LiveBackend",
     "kill_flag_path": "KILL_SWITCH.flag",
     "kraken_api_key_keyring_service": "btc-bot-v3",
-    "telegram_chat_id": "<int>",
     "watchdog_pid_file": "watchdog.pid"
   },
   "manifest": {
@@ -48,7 +47,7 @@ Runtime configuration that varies between deployments / checkpoints / data refre
 
 ## SHA256 manifest
 
-A separate file (`checkpoints/manifest.json`) lists every artifact and its sha256. The execution engine verifies at startup AND on every weight reload that the on-disk hashes match the manifest, AND that the manifest references match `agent_config.json`. Mismatch = refuse to start (or refuse the reload), Telegram alert.
+A separate file (`checkpoints/manifest.json`) lists every artifact and its sha256. The execution engine verifies at startup AND on every weight reload that the on-disk hashes match the manifest, AND that the manifest references match `agent_config.json`. Mismatch = refuse to start (or refuse the reload), sound/beep + log alert.
 
 Manifest scope:
 - Predictor weights (`.pt`)

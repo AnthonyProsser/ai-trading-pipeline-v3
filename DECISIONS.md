@@ -2,7 +2,7 @@
 
 Flat key → current value. Source of truth for every coding session. Any change here requires a `CHANGELOG.md` entry in the same commit. Append-only history lives in `CHANGELOG.md`; this file is overwritten in place.
 
-Last consolidated: 2026-05-09
+Last consolidated: 2026-06-28
 
 ---
 
@@ -81,12 +81,12 @@ Last consolidated: 2026-05-09
 
 ## Training UI
 
-- **training_ui_stack**: Textual (Python TUI; no browser). Runs in one terminal window during training. Dependency added via `uv add textual`.
-- **training_ui_controls**: start (launch training subprocess), stop (graceful checkpoint save + clean exit), save (write checkpoint now without stopping)
-- **training_ui_stop_behavior**: stop/save signals sent via threading.Event or subprocess signal; training loop catches signal, writes checkpoint, exits cleanly. Closing the TUI does not kill the training process.
-- **training_ui_metrics**: live display of fold index, epoch, train loss (pinball + direction), val loss, epoch ETA, fold ETA, total run ETA
-- **training_ui_alerts**: in-app Textual notification banner + winsound.Beep on fold complete, training error, or early-stop trigger; structured JSON log (same log sink as rest of pipeline)
+- **training_ui_stack**: FastAPI + vanilla JS (browser-based, same stack as the trading dashboard). Runs on a separate port. No React. Full spec in `training-dashboard.md`.
+- **training_ui_controls**: start (POST to launch training subprocess), stop (graceful checkpoint save + clean exit), save (write checkpoint now without stopping). Signals sent via threading.Event or subprocess signal; training loop catches signal, writes checkpoint, exits cleanly. Closing the browser tab does not kill the training process.
+- **training_ui_metrics**: live display via WebSocket or SSE — fold index, epoch, train loss (pinball + direction), val loss, epoch ETA, fold ETA, total run ETA.
+- **training_ui_alerts**: browser notification banner + winsound.Beep (server-side) on fold complete, training error, or early-stop trigger; structured JSON log (same log sink as rest of pipeline).
 - **training_ui_export**: on each fold completion, append a fold summary record to `training_metrics.json` (path in `PredictorConfig`). This file is the handoff artifact for Claude optimization review. Schema: fold index, train/val loss, DA, quantile coverage, duration seconds, hyperparams snapshot.
+- **training_ui_data_gate**: on startup, check for `data/raw/BTCUSD_1.csv`. If absent, show a "Download Data" screen before any training controls are enabled. The screen has: (a) a short instruction paragraph, (b) the Google Drive URL derived from `DATA.KRAKEN_HISTORY_GDRIVE_ID`, (c) a drag-and-drop zone accepting the Kraken zip or a bare CSV. On successful upload, transitions to the normal training dashboard. Uses `POST /api/setup/upload-data` (shared implementation with the trading dashboard's setup router).
 
 ## Cross-cutting
 
@@ -98,7 +98,7 @@ Last consolidated: 2026-05-09
 - **holdout_evaluation**: walk-forward inside the holdout: 12 × 1-week windows; gate requires positive Sortino on **median AND worst-week**, regime-stratified positive in trending AND ranging
 - **constants_organization**: single `constants.py` at root, organized into `@dataclass(frozen=True)` groups: `PredictorConfig`, `RLConfig`, `TraderConfig`, `ExecutionConfig`, `DataConfig`
 - **test_discipline**: tests written and committed before implementation. Verified by `test-enforcer` subagent + git log order.
-- **branch_model**: `phase-XY` off `developer`; `developer` → `main` on phase exit
+- **branch_model**: `phase-XY` off `main`; merged to `main` on phase exit (no intermediate `developer` branch)
 - **doc_drift_policy**: no separate "correction" documents allowed. `DECISIONS.md` updated in place; amendments → `CHANGELOG.md`. Pre-merge check: any change to a decision value must touch `CHANGELOG.md` in the same commit.
 - **hyperparameter_tuning_during_walk_forward**: forbidden during a fold gate evaluation. If a fold fails Sortino threshold, EITHER training continues unchanged OR the model is rejected. No "tweak and rerun." (Bonferroni defense.)
 

@@ -18,6 +18,18 @@ Format:
 - Reason: code-review audit flagged a bare module-level `SCHEMA_VERSION = "1.0"` in `scripts/deploy_predictor.py`, violating the "no bare module-level constants / magic numbers live in constants.py" rule. Value unchanged; deploy now reads `EXECUTION.AGENT_CONFIG_SCHEMA_VERSION`. Same audit pass (no other decision values changed): validator rejects NaN/inf candles; `train_one_fold` guards empty `train_loader` + non-finite val loss and reports epoch-averaged train loss; `verify_manifest` rejects uncovered artifacts; scaler gains `transform_inference` so deploy no longer re-implements the scaling formula.
 - Source: audit
 
+## 2026-06-28 — Retire gdown ingest; manual CSV placement
+- Removed `scripts/ingest_kraken_history.py` (Google Drive / gdown bootstrap ingest). The raw `BTCUSD_1.csv` is now placed into `data/raw/` manually (drag-and-drop) instead of being downloaded.
+- Dropped dead dependencies `browser-cookie3` and `gdown` from `pyproject.toml` (regenerated `uv.lock`); removed the script's per-file ruff ignore.
+- Cleaned remaining references in `CLAUDE.md`, `INDEX.md`, `dashboard.md`, `consolidated-consolidated-plan.md`, `.gitignore`, and the `train_predictor.py` "csv not found" message.
+- Reason: user directive — the gdown/Google Drive ingest path is retired in favor of manual CSV placement.
+- Source: user directive (2026-06-28)
+
+## 2026-06-28 — Drop `developer` branch; phase branches merge to `main`
+- branch_model: "`phase-XY` off `developer`; `developer` → `main` on phase exit" → "`phase-XY` off `main`; merged to `main` on phase exit (no intermediate `developer` branch)"
+- Reason: user directive — the `developer` integration branch is no longer used; phase branches merge straight to `main` (matching the open `phase-1-predictor` → `main` PR). Same doc-consolidation pass also updated `CLAUDE.md` §"Project-specific rules" and the consolidated plan (§1.4, §3.0) to match.
+- Source: user directive (2026-06-28) — doc-consolidation sweep
+
 ## 2026-06-27 — Bind encoder activation + norm_first to constants
 - predictor_config.ACTIVATION: absent → `"gelu"`
 - predictor_config.NORM_FIRST: absent → `True`
@@ -47,6 +59,20 @@ Format:
 - training_ui_export: absent → per-fold JSON record appended to `training_metrics.json` (path in `PredictorConfig`); schema: fold index, losses, DA, quantile coverage, duration, hyperparams snapshot
 - Reason: user directive — no Telegram; replace with a lightweight Textual TUI for training management and a JSON export handoff for Claude optimization review.
 - Source: user directive (Phase 1 training tooling)
+
+## 2026-06-28 — Both dashboards are browser apps; trading dashboard gains optimization panels
+- training_ui_stack: Textual TUI → FastAPI + vanilla JS (browser). Separate port from trading dashboard. Full spec in `training-dashboard.md`.
+- training_ui_data_gate: file-path `[Input]` widget → drag-and-drop zone (browser natively supports it).
+- training_ui_controls/metrics/alerts: unchanged in function; delivery mechanism changes from Textual widgets to browser buttons + WebSocket/SSE + browser notification banner.
+- dashboard (trading): drag-and-drop removed (data setup belongs in training dashboard). Added panels: performance metrics (Sharpe/Sortino/win rate/drawdown 7d/30d/all-time), regime analysis, fee drag, model management (checkpoint SHA + deploy gate scores + W&B link), kill criteria status (K1–K9 live vs. threshold), data collection (status + on-demand gap-fill trigger), AI analysis (Claude API LLM report + on-chart predictor insights). WebSocket type enum extended with `"metrics"` and `"criteria"`.
+- Reason: user directive — both dashboards are browser-based. Training dashboard owns drag-and-drop data upload; trading dashboard owns live optimization tooling that W&B does not cover (trade-level performance, regime breakdown, fee drag, model drift, LLM analysis).
+- Source: user directive (2026-06-28)
+
+## 2026-06-28 — Training TUI data gate + trading dashboard drag-and-drop
+- training_ui_data_gate: absent → on startup check for `data/raw/BTCUSD_1.csv`; if absent, block training and show a "Download Data" screen with instruction text, Google Drive URL (from `DATA.KRAKEN_HISTORY_GDRIVE_ID`), and a file-path `[Input]` widget; atomic copy/extract on submission
+- dashboard (trading): first-run data panel added → drag-and-drop area accepting zip or CSV, Google Drive link, `POST /api/setup/upload-data` endpoint; panel shown only when CSV absent, disabled (404) once present
+- Reason: user directive — two distinct apps: (1) Training TUI (Textual, terminal) for model training; (2) Trading Dashboard (FastAPI + vanilla JS) for live/paper trading. Each independently detects missing raw data and guides the user to supply it. The TUI uses a file-path input (idiomatic for Textual); the dashboard uses drag-and-drop (native to the browser). `dashboard.md` retitled "Trading Dashboard" and cross-reference added.
+- Source: user directive (2026-06-28)
 
 ## 2026-06-27 — PyTorch toolchain (Phase 1 predictor)
 - Toolchain.python_version: absent → `3.13` (pinned via `.python-version`)

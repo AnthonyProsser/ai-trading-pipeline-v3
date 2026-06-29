@@ -121,7 +121,7 @@ def prepare(
     csv_path = REPO_ROOT / DATA.KRAKEN_HISTORY_OUT_DIR / "BTCUSD_1.csv"
     if not csv_path.exists():
         raise SystemExit(
-            f"[stop] {csv_path} not found. Run scripts/ingest_kraken_history.py first, "
+            f"[stop] {csv_path} not found. Place BTCUSD_1.csv there first, "
             f"or pass --synthetic for a GPU/plumbing smoke without real data."
         )
     timestamps, ohlcv = load_real_candles(csv_path)

@@ -79,10 +79,10 @@ Solo paper-trading BTC bot. Three components: **Predictor** (PatchTST encoder, 1
 **Build phase (pre-training gate).** Building phase by phase toward a green smoke run.
 
 - **Phase 0 (Data)** — COMPLETE, merged to `main`. `src/data/` (feature_pipeline, scaler, walk_forward, validator, manifest) and matching `tests/data/` are fully green.
-- **Phase 1 (Predictor)** — modules COMPLETE on `phase-1-predictor` (PR pending). All built tests-first and green (68 tests): `early_stopping.py`, `loss.py`, `rollout.py` (geometry enforcement), `model.py` (channel-mixing PatchTST), `training.py` (`build_fold_loaders` + `train_one_fold`), `deploy_gates.py`; plus `scripts/train_predictor.py` (`--smoke`/`--synthetic`) and `scripts/deploy_predictor.py`. The **synthetic** GPU smoke passed on the 4060 (lookback 1440, batch 32, finite loss, no OOM/NaN). The **real-data** smoke is still pending: `data/raw/BTCUSD_1.csv` is absent (Google Drive ingest rate-limited; re-run `scripts/ingest_kraken_history.py` after cooldown, then `uv run python scripts/train_predictor.py --smoke`). `deploy_predictor.py` runs end-to-end only once a trained checkpoint + locked test set exist. W&B is not installed (offline-capable flag wired; `uv add wandb` to enable).
+- **Phase 1 (Predictor)** — modules COMPLETE on `phase-1-predictor` (PR pending). All built tests-first and green (68 tests): `early_stopping.py`, `loss.py`, `rollout.py` (geometry enforcement), `model.py` (channel-mixing PatchTST), `training.py` (`build_fold_loaders` + `train_one_fold`), `deploy_gates.py`; plus `scripts/train_predictor.py` (`--smoke`/`--synthetic`) and `scripts/deploy_predictor.py`. The **synthetic** GPU smoke passed on the 4060 (lookback 1440, batch 32, finite loss, no OOM/NaN). The **real-data** smoke is still pending: `data/raw/BTCUSD_1.csv` is absent (manually drag-and-drop the CSV into `data/raw/`, then `uv run python scripts/train_predictor.py --smoke`). `deploy_predictor.py` runs end-to-end only once a trained checkpoint + locked test set exist. W&B is not installed (offline-capable flag wired; `uv add wandb` to enable).
 - **Phases 2–4** — not started. `src/execution/`, `src/trader/`, `src/dashboard/` do not exist.
 
-`scripts/ingest_kraken_history.py`, `scripts/train_predictor.py`, and `scripts/deploy_predictor.py` exist. Other scripts (e.g. `backtest.py`, `holdout_evaluator.py`, `permutation_test.py`) are planned deliverables — they do not exist yet.
+`scripts/train_predictor.py` and `scripts/deploy_predictor.py` exist. Other scripts (e.g. `backtest.py`, `holdout_evaluator.py`, `permutation_test.py`) are planned deliverables — they do not exist yet.
 
 Read first, every coding session, in this order: `DECISIONS.md` → `INDEX.md` → `constants.py` → the relevant context card named by the matching INDEX row. They are the source of truth for architectural decisions, task → file mapping, and frozen magic numbers respectively.
 
@@ -110,7 +110,7 @@ Read first, every coding session, in this order: `DECISIONS.md` → `INDEX.md` �
 - **Exchange-native stop-loss is mandatory.** Execution refuses any order whose stop cannot be placed at Kraken. No naked positions under any code path.
 - **SHA256 manifest verified on every weight read.** Covers weights + scaler + `constants.py`.
 - **`asyncio` only in `src/execution/`.** Predictor and trader code stays synchronous.
-- **One branch per phase:** `phase-XY` off `developer`; `developer` → `main` at phase exit. Never commit to `main` directly.
+- **One branch per phase:** `phase-XY` off `main`; merged to `main` at phase exit. Never commit to `main` directly.
 - **Any `DECISIONS.md` change requires a `CHANGELOG.md` entry in the same commit.**
 - **Flag every unspecced decision.** If a task requires a value not in `DECISIONS.md` or `constants.py`, stop and ask. Do not "use a reasonable default" — this aligns with Karpathy §1.
 
@@ -149,7 +149,7 @@ The `everything-claude-code` plugin is installed. Use these capabilities where t
 
 ### Commands (when toolchain lands)
 
-`scripts/ingest_kraken_history.py` is currently present; other script/module commands below are planned phase deliverables tracked in `INDEX.md` and become runnable as those files land.
+`scripts/train_predictor.py` and `scripts/deploy_predictor.py` are currently present; other script/module commands below are planned phase deliverables tracked in `INDEX.md` and become runnable as those files land.
 
 | Task | Command |
 |---|---|
@@ -165,4 +165,3 @@ The `everything-claude-code` plugin is installed. Use these capabilities where t
 | Permutation test (pre-live gate) | `uv run python scripts/permutation_test.py` |
 | Dashboard | `uv run python -m src.dashboard.main` |
 | Execution loop | `uv run python -m src.execution.loop` |
-| Bootstrap ingest | `uv run python scripts/ingest_kraken_history.py` |
