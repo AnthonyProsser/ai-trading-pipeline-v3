@@ -206,6 +206,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Local data — downloaded via scripts/ingest_kraken_history.py, not versioned.
+# Local data — manually placed (BTCUSD_1.csv drag-and-drop), not versioned.
 # Multi-GB raw CSV; locked test set; cache.
 /data/

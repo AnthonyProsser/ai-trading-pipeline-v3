@@ -96,6 +96,62 @@ def test_evaluate_deploy_gates_all_pass() -> None:
     assert result.all_passed
 
 
+def test_evaluate_deploy_gates_fails_on_low_da() -> None:
+    torch = pytest.importorskip("torch")
+    from src.predictor.deploy_gates import evaluate_deploy_gates
+
+    pred, target = _blank(20)
+    pred[:, _CLOSE, _Q10] = -1.0
+    pred[:, _CLOSE, _Q90] = 1.0
+    pred[:, _CLOSE, _Q50] = 2 * _FEE  # all tradeable, all predict "up"
+    # coverage 0.80 + calibration 0.80 (16 in [-1,1] & <= q90, 4 above), but only 10/20 up.
+    target[:, _CLOSE] = torch.tensor([0.5] * 6 + [-0.5] * 10 + [2.0] * 4)
+
+    result = evaluate_deploy_gates(pred, target, train_time_q90_coverage=0.80)
+
+    assert result.coverage_pass and result.calibration_pass
+    assert result.directional_accuracy == pytest.approx(0.5)
+    assert not result.da_pass
+    assert not result.all_passed
+
+
+def test_evaluate_deploy_gates_fails_on_calibration() -> None:
+    pytest.importorskip("torch")
+    from src.predictor.deploy_gates import evaluate_deploy_gates
+
+    pred, target = _blank(10)
+    pred[:, _CLOSE, _Q10] = -1.0
+    pred[:, _CLOSE, _Q90] = 1.0
+    pred[:, _CLOSE, _Q50] = -2 * _FEE  # predict "down"
+    # target below q10 -> outside [q10, q90] (calibration 0), but <= q90 (coverage 1.0)
+    # and sign matches q50<0 (DA 1.0): isolates the calibration gate.
+    target[:, _CLOSE] = -2.0
+
+    result = evaluate_deploy_gates(pred, target, train_time_q90_coverage=1.0)
+
+    assert result.coverage_pass and result.da_pass
+    assert not result.calibration_pass
+    assert not result.all_passed
+
+
+def test_evaluate_deploy_gates_nan_da_fails_gate() -> None:
+    torch = pytest.importorskip("torch")
+    from src.predictor.deploy_gates import evaluate_deploy_gates
+
+    pred, target = _blank(20)
+    pred[:, _CLOSE, _Q10] = -1.0
+    pred[:, _CLOSE, _Q90] = 1.0
+    pred[:, _CLOSE, _Q50] = 0.5 * _FEE  # all sub-fee -> no tradeable -> DA is NaN
+    target[:, _CLOSE] = torch.tensor([0.5] * 16 + [2.0] * 4)
+
+    result = evaluate_deploy_gates(pred, target, train_time_q90_coverage=0.80)
+
+    assert math.isnan(result.directional_accuracy)
+    assert result.coverage_pass and result.calibration_pass
+    assert not result.da_pass  # nan > threshold is False
+    assert not result.all_passed
+
+
 def test_evaluate_deploy_gates_fails_on_coverage_drift() -> None:
     torch = pytest.importorskip("torch")
     from src.predictor.deploy_gates import evaluate_deploy_gates

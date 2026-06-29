@@ -13,6 +13,16 @@ Format:
 
 ---
 
+## [Unreleased]
+- `ExecutionConfig.AGENT_CONFIG_SCHEMA_VERSION`: absent → `"1.0"` (moved from a bare module-level `SCHEMA_VERSION` constant in `scripts/deploy_predictor.py` into `constants.py`, per the "no bare module-level constants / magic numbers live in constants.py" rule). Value unchanged; deploy now reads `EXECUTION.AGENT_CONFIG_SCHEMA_VERSION`.
+- Reason: code-review audit — bare module-level constant outside `constants.py`.
+- Source: audit
+- Removed `scripts/ingest_kraken_history.py` (Google Drive / gdown bootstrap ingest). The raw `BTCUSD_1.csv` is now placed into `data/raw/` manually (drag-and-drop) instead of being downloaded.
+- Dropped dead dependencies `browser-cookie3` and `gdown` from `pyproject.toml` (regenerated `uv.lock`); removed the script's per-file ruff ignore.
+- Cleaned remaining references in `CLAUDE.md`, `INDEX.md`, `dashboard.md`, `consolidated-consolidated-plan.md`, `.gitignore`, and the `train_predictor.py` "csv not found" message.
+- Reason: user directive — the gdown/Google Drive ingest path is retired in favor of manual CSV placement.
+- Source: user directive (2026-06-28)
+
 ## 2026-06-28 — Drop `developer` branch; phase branches merge to `main`
 - branch_model: "`phase-XY` off `developer`; `developer` → `main` on phase exit" → "`phase-XY` off `main`; merged to `main` on phase exit (no intermediate `developer` branch)"
 - Reason: user directive — the `developer` integration branch is no longer used; phase branches merge straight to `main` (matching the open `phase-1-predictor` → `main` PR). Same doc-consolidation pass also updated `CLAUDE.md` §"Project-specific rules" and the consolidated plan (§1.4, §3.0) to match.

@@ -23,7 +23,6 @@ The lookup table for every coding session. Find the row that matches the task, l
 | Set up a new walk-forward fold | `splits-validation.md`, `constants.py`, `src/data/walk_forward.py` |
 | Build per-fold MinMaxScaler | `feature-pipeline.md`, `src/data/scaler.py` |
 | Carve out the locked test set | `splits-validation.md`, `src/data/walk_forward.py` |
-| Build Kraken OHLCVT ingest | `execution-engine.md`, `scripts/ingest_kraken_history.py` |
 | Build CandleValidator (corruption + gap rules) | `feature-pipeline.md`, `src/data/validator.py` |
 | Run the baseline signal check | `feature-pipeline.md`, `scripts/baseline_signal_check.py` |
 | Wire the SHA256 manifest | `agent-config.md`, `src/data/manifest.py` |

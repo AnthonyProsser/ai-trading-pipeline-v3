@@ -298,7 +298,6 @@ btc-bot-v3/
 │   └── training_ui/
 │
 ├── scripts/                           # One-time runners; src/ NEVER imports from here
-│   ├── ingest_kraken_history.py
 │   ├── train_predictor.py
 │   ├── retrain_predictor.py
 │   ├── deploy_predictor.py

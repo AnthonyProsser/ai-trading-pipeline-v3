@@ -55,6 +55,20 @@ def test_verify_raises_on_modification(tmp_path: Path) -> None:
         verify_manifest(m, arts)
 
 
+def test_verify_raises_when_artifact_absent_from_manifest(tmp_path: Path) -> None:
+    # A stale manifest covering only 'weights' must not silently pass a fuller artifact set.
+    f1 = _write(tmp_path / "w.pt", b"weights")
+    f2 = _write(tmp_path / "s.pkl", b"scaler")
+    manifest = build_manifest({"weights": f1})
+    with pytest.raises(ManifestError):
+        verify_manifest(manifest, {"weights": f1, "scaler": f2})
+
+
+def test_build_manifest_raises_on_missing_path(tmp_path: Path) -> None:
+    with pytest.raises(OSError):
+        build_manifest({"weights": tmp_path / "does_not_exist.pt"})
+
+
 def test_verify_raises_on_missing_artifact(tmp_path: Path) -> None:
     f = _write(tmp_path / "w.pt", b"data")
     arts = {"weights": f}

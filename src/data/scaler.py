@@ -26,6 +26,13 @@ class PerFoldMinMaxScaler:
         self.data_max_ = x.max(axis=0)
         return self
 
+    def _scale(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        assert self.data_min_ is not None and self.data_max_ is not None
+        span = self.data_max_ - self.data_min_
+        span[span == 0.0] = 1.0  # constant column -> map to 0 instead of dividing by zero
+        scaled: npt.NDArray[np.float64] = (np.asarray(x, dtype=np.float64) - self.data_min_) / span
+        return scaled
+
     def transform(
         self, x: npt.NDArray[np.float64], timestamps: npt.NDArray[np.datetime64]
     ) -> npt.NDArray[np.float64]:
@@ -37,10 +44,18 @@ class PerFoldMinMaxScaler:
                 "transform timestamps fall outside the fold window "
                 f"[{self.fold_start}, {self.fold_end}] -- possible next-fold leakage"
             )
-        span = self.data_max_ - self.data_min_
-        span[span == 0.0] = 1.0  # constant column -> map to 0 instead of dividing by zero
-        scaled: npt.NDArray[np.float64] = (np.asarray(x, dtype=np.float64) - self.data_min_) / span
-        return scaled
+        return self._scale(x)
+
+    def transform_inference(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        """Scale with the fitted fold stats, skipping the fold-window timestamp check.
+
+        For locked-test / live inference, where windows legitimately fall outside the
+        training fold but must use the trained min/max. transform() keeps the window
+        assertion (the leakage tripwire); both share the one scaling formula via _scale.
+        """
+        if self.data_min_ is None or self.data_max_ is None:
+            raise RuntimeError("transform_inference() called before fit()")
+        return self._scale(x)
 
     def fit_transform(
         self, x_train: npt.NDArray[np.float64], timestamps: npt.NDArray[np.datetime64]

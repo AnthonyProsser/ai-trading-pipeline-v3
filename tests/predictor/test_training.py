@@ -141,3 +141,70 @@ def test_train_one_fold_rejects_non_positive_epochs() -> None:
     model = PatchTST(lookback=_LOOKBACK)
     with pytest.raises(ValueError, match="max_epochs"):
         train_one_fold(model, scaler, train_loader, val_loader, device="cpu", max_epochs=0)
+
+
+def test_window_dataset_too_short_raises() -> None:
+    torch = pytest.importorskip("torch")
+    from src.predictor.training import WindowDataset
+
+    n = _LOOKBACK + _H - 1  # one row short of a single window
+    x = torch.zeros((n, _F))
+    with pytest.raises(ValueError, match="shorter than"):
+        WindowDataset(x, x, lookback=_LOOKBACK, horizon=_H)
+
+
+def test_train_one_fold_raises_on_empty_train_loader() -> None:
+    pytest.importorskip("torch")
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, train_one_fold
+
+    feats, ts = _synthetic(110)
+    # train slice -> 4 windows < batch 16 with drop_last -> 0 batches.
+    fold = Fold(0, 0, 50, 50, 110, 110, 110)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=16
+    )
+    assert len(train_loader) == 0
+    model = PatchTST(lookback=_LOOKBACK)
+    with pytest.raises(RuntimeError, match="no batches"):
+        train_one_fold(model, scaler, train_loader, val_loader, device="cpu", max_epochs=1)
+
+
+def test_train_one_fold_max_steps_early_exit() -> None:
+    pytest.importorskip("torch")
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, train_one_fold
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=16
+    )
+    model = PatchTST(lookback=_LOOKBACK)
+    metrics = train_one_fold(
+        model, scaler, train_loader, val_loader, device="cpu", max_epochs=5, max_steps=3
+    )
+    assert metrics.steps == 3
+
+
+def test_train_one_fold_raises_on_nonfinite_val(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("torch")
+    import src.predictor.training as training_mod
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, train_one_fold
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=16
+    )
+    model = PatchTST(lookback=_LOOKBACK)
+    # Force a NaN validation loss; it must fail loudly, not be laundered as "no improvement".
+    monkeypatch.setattr(
+        training_mod, "_evaluate", lambda *a, **k: (float("nan"), float("nan"), float("nan"))
+    )
+    with pytest.raises(ValueError, match="non-finite validation loss"):
+        train_one_fold(model, scaler, train_loader, val_loader, device="cpu", max_epochs=1)

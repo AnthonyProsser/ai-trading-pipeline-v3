@@ -34,7 +34,7 @@ Read-only telemetry, optimization tooling, and a single capital-safety affordanc
 
 12. **Data collection** — two sub-sections:
     - **Status**: last candle timestamp, gap count since last ingest, WebSocket connection state, time since last REST gap-fill.
-    - **Trigger**: "Collect now" button → `POST /api/data/collect` → runs the Kraken REST gap-fill on demand (same logic as the execution engine's startup gap-fill, not `ingest_kraken_history.py`). Disabled if WebSocket is live and gap count is zero.
+    - **Trigger**: "Collect now" button → `POST /api/data/collect` → runs the Kraken REST gap-fill on demand (same logic as the execution engine's startup gap-fill). Disabled if WebSocket is live and gap count is zero.
 
 ### AI analysis panel
 

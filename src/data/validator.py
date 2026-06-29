@@ -49,8 +49,15 @@ class ValidatedCandles:
 def _corrupt_mask(ohlcv: npt.NDArray[np.float64]) -> npt.NDArray[np.bool_]:
     op, hi, lo = ohlcv[:, OhlcvCol.OPEN], ohlcv[:, OhlcvCol.HIGH], ohlcv[:, OhlcvCol.LOW]
     cl, vol = ohlcv[:, OhlcvCol.CLOSE], ohlcv[:, OhlcvCol.VOLUME]
+    # NaN/inf in any column is corrupt. The geometry comparisons silently return False
+    # for NaN operands (np.maximum(op, nan) is nan, nan < x is False), so without the
+    # finiteness term an all-NaN close would pass every check and enter the feature grid.
     bad: npt.NDArray[np.bool_] = (
-        (hi < np.maximum(op, cl)) | (lo > np.minimum(op, cl)) | (vol < 0.0) | (cl <= 0.0)
+        (hi < np.maximum(op, cl))
+        | (lo > np.minimum(op, cl))
+        | (vol < 0.0)
+        | (cl <= 0.0)
+        | ~np.isfinite(ohlcv).all(axis=1)
     )
     return bad
 
