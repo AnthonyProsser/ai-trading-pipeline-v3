@@ -194,6 +194,10 @@ class ExecutionConfig:
     DASHBOARD_BIND_HOST: str = "127.0.0.1"
     DASHBOARD_BIND_PORT: int = 8000
 
+    # agent_config.json schema version. deploy_predictor refuses to overwrite a config
+    # whose schema_version differs (surfaces silent schema drift). See agent-config.md.
+    AGENT_CONFIG_SCHEMA_VERSION: str = "1.0"
+
     # Kill criteria — auto-shutdown (no operator override path)
     K1_SESSION_DRAWDOWN: float = 0.03  # 3% in 24h rolling
     K2_TOTAL_DRAWDOWN: float = 0.10  # 10% total

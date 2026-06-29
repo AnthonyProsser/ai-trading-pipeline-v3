@@ -13,6 +13,11 @@ Format:
 
 ---
 
+## 2026-06-28 — Move agent_config schema version into constants.py
+- ExecutionConfig.AGENT_CONFIG_SCHEMA_VERSION: absent → `"1.0"`
+- Reason: code-review audit flagged a bare module-level `SCHEMA_VERSION = "1.0"` in `scripts/deploy_predictor.py`, violating the "no bare module-level constants / magic numbers live in constants.py" rule. Value unchanged; deploy now reads `EXECUTION.AGENT_CONFIG_SCHEMA_VERSION`. Same audit pass (no other decision values changed): validator rejects NaN/inf candles; `train_one_fold` guards empty `train_loader` + non-finite val loss and reports epoch-averaged train loss; `verify_manifest` rejects uncovered artifacts; scaler gains `transform_inference` so deploy no longer re-implements the scaling formula.
+- Source: audit
+
 ## 2026-06-27 — Bind encoder activation + norm_first to constants
 - predictor_config.ACTIVATION: absent → `"gelu"`
 - predictor_config.NORM_FIRST: absent → `True`

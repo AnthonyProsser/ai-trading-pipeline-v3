@@ -51,6 +51,24 @@ def test_rejects_low_volume_and_close_rules() -> None:
     assert res.report.n_corrupt_dropped == 3
 
 
+def test_rejects_nan_in_ohlcv() -> None:
+    ts = _grid(3)
+    # NaN close on the middle candle: geometry comparisons silently pass NaN, so the
+    # validator must flag it as corrupt via the finiteness check.
+    ohlcv = _ohlcv([[10, 11, 9, 10, 100], [10, 12, 9, float("nan"), 120], [11, 12, 10, 11, 80]])
+    res = validate_candles(ts, ohlcv)
+    assert res.report.n_corrupt_dropped == 1
+    assert res.is_interpolated[1]  # corrupt minute re-gridded + interpolated
+
+
+def test_zero_volume_candle_is_valid() -> None:
+    ts = _grid(2)
+    # Zero volume is legitimate (forward-filled gaps carry volume 0); only volume < 0 is corrupt.
+    ohlcv = _ohlcv([[10, 11, 9, 10, 0], [10, 12, 10, 11, 0]])
+    res = validate_candles(ts, ohlcv)
+    assert res.report.n_corrupt_dropped == 0
+
+
 def test_duplicate_timestamp_keeps_last() -> None:
     ts = np.array([T0, T0 + MIN, T0 + MIN], dtype="datetime64[m]")
     ohlcv = _ohlcv([[10, 11, 9, 10, 100], [10, 12, 10, 11, 120], [10, 13, 10, 12, 130]])

@@ -31,19 +31,37 @@ def test_early_stopping_patience_exposed_and_respected() -> None:
     assert plateau[patience - 1] is True  # fires exactly at patience
 
 
+def test_early_stopping_resets_after_improvement() -> None:
+    # A plateau that is broken by a real improvement restarts the full patience window.
+    stopper = EarlyStopper(patience=2)
+    assert stopper.step(1.0) is False  # improvement from +inf
+    assert stopper.step(1.0) is False  # bad 1
+    assert stopper.step(0.5) is False  # improvement resets the counter
+    assert stopper.step(0.5) is False  # bad 1 (post-reset)
+    assert stopper.step(0.5) is True   # bad 2 -> fires
+
+
+def test_early_stopping_min_delta_requires_real_improvement() -> None:
+    # A decrease smaller than min_delta does not count as improvement.
+    stopper = EarlyStopper(patience=1, min_delta=0.1)
+    assert stopper.step(1.0) is False
+    assert stopper.step(0.95) is True  # 0.95 < 1.0 but not by 0.1 -> non-improving -> fires
+
+
 def test_variance_floor_loss_strictly_positive() -> None:
-    # Bug #1: output collapsed to a constant drove NLL negative. The pinball +
-    # direction loss is strictly > 0 across the first N steps of any real run.
+    # Bug #1: output collapsed to a CONSTANT drove NLL negative. The failure mode is a
+    # constant prediction, so the test pins that case (a random prediction could be > 0
+    # even in a broken loss). The pinball + net-of-fee direction loss stays strictly > 0.
     torch = pytest.importorskip("torch")
     from src.predictor.loss import predictor_loss
 
     gen = torch.Generator().manual_seed(0)
     pred_shape = (8, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS, len(PREDICTOR.QUANTILES))
     tgt_shape = (8, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS)
+    const_pred = torch.zeros(pred_shape)  # collapsed / constant output
     for _ in range(PREDICTOR.VARIANCE_FLOOR_FIRST_N_STEPS):
-        pred = torch.randn(pred_shape, generator=gen)
         target = torch.randn(tgt_shape, generator=gen) * 0.01
-        loss = predictor_loss(pred, target)
+        loss = predictor_loss(const_pred, target)
         assert loss.total.item() > 0.0
         assert loss.pinball.item() >= 0.0
         assert loss.direction.item() >= 0.0

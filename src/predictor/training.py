@@ -182,6 +182,8 @@ def train_one_fold(
     scheduler = _warmup_cosine(optimizer, total_steps)
     stopper = EarlyStopper(PREDICTOR.EARLY_STOPPING_PATIENCE)
     use_amp = PREDICTOR.USE_AMP and dev.type == "cuda"
+    if len(train_loader) == 0:
+        raise RuntimeError("train_loader yielded no batches — fold or batch_size misconfigured")
 
     step = 0
     epochs_run = 0
@@ -192,6 +194,8 @@ def train_one_fold(
     for epoch in range(max_epochs):
         epochs_run = epoch + 1
         model.train()
+        ep_pin = ep_dir = ep_tot = 0.0
+        ep_batches = 0
         for x, y in train_loader:
             x, y = x.to(dev), y.to(dev)
             optimizer.zero_grad(set_to_none=True)
@@ -206,24 +210,39 @@ def train_one_fold(
             optimizer.step()
             scheduler.step()
             step += 1
-            train_pin, train_dir, train_tot = (
+            batch_pin, batch_dir, batch_tot = (
                 float(comp.pinball),
                 float(comp.direction),
                 float(comp.total),
             )
+            ep_pin += batch_pin
+            ep_dir += batch_dir
+            ep_tot += batch_tot
+            ep_batches += 1
             if log is not None:
                 payload: dict[str, object] = {
                     "split": "train",
                     "step": step,
-                    "pinball": train_pin,
-                    "direction": train_dir,
-                    "total": train_tot,
+                    "pinball": batch_pin,
+                    "direction": batch_dir,
+                    "total": batch_tot,
                 }
                 log(payload)
             if max_steps is not None and step >= max_steps:
                 break
 
+        # Report the epoch-averaged train loss (not the last batch) so it is comparable
+        # with the epoch-averaged val loss from _evaluate.
+        if ep_batches > 0:
+            train_pin, train_dir, train_tot = (
+                ep_pin / ep_batches,
+                ep_dir / ep_batches,
+                ep_tot / ep_batches,
+            )
+
         val_pin, val_dir, val_tot = _evaluate(model, val_loader, dev, use_amp)
+        if not math.isfinite(val_tot):
+            raise ValueError(f"non-finite validation loss at epoch {epochs_run}: total={val_tot}")
         if log is not None:
             log(
                 {
