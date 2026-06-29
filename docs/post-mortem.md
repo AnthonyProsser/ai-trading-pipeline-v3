@@ -1,12 +1,12 @@
-# BTC Trading Bot v3 — Master Consolidated Plan
+# v3 Post-Mortem, Rationale & Planning Record
 
-**Synthesized from:** Multiple AI Sources
-**Date:** 2026-05-07
-**Purpose:** Single forward-looking source of truth. Replaces all previous source documents.
+> **Frozen historical record — not a live source of truth.** This document holds the v2 failure analysis, the v2→v3 decision rationale, the build-order/parallel-work plan, and the source-attribution audit that originally lived in `consolidated-consolidated-plan.md` (synthesized from multiple AI sources, dated 2026-05-07). It was distributed here so no information is lost while the per-phase context cards remain the place coding sessions actually load.
+>
+> **For current, authoritative values, read `DECISIONS.md` and the context cards — never this file.** The "v3" columns in the delta tables below record what was decided *at the v2→v3 transition*; they are not updated when a decision changes. Per `CLAUDE.md`, this file is in `docs/` and is **never loaded in coding sessions**.
 
 ---
 
-## 0. Why This Exists
+## 0. Why v3 Exists
 
 v2 stalled in predictor training with three unresolved bugs (negative NLL, zero trend loss, premature early-stopping) on a 10-day Junie/Copilot sprint. The diagnosis (`old_project.md §6`) was a **coordination failure across multiple AIs without shared context** — not a capability failure. v3's structural defense is single-AI (Claude Code) + adversarial human review + filesystem-as-state. That defense fails the same way if v3 launches without:
 
@@ -14,7 +14,7 @@ v2 stalled in predictor training with three unresolved bugs (negative NLL, zero 
 2. The locked I/O contract between Predictor and Trader, set before either is built.
 3. Safety scaffolding (kill switch, fee model, stale-candle policy) before any backtest is trusted.
 
-This plan locks all three.
+The v3 doc set (`DECISIONS.md`, `INDEX.md`, `CLAUDE.md`, the context cards) locks all three.
 
 ---
 
@@ -41,7 +41,7 @@ Statistical edge was measured by arbitrary timeframes (e.g., "3 positive months"
 
 ## 0.2 The v3 Core Directives (Architectural Mandates)
 
-These five mandates are non-negotiable. Any proposed change that violates a directive requires explicit user escalation before implementation. They are listed here because prose rationale tables in §1 can be skimmed; directives cannot.
+These five mandates are non-negotiable. Any proposed change that violates a directive requires explicit user escalation before implementation. They are listed here because prose rationale tables in §1 can be skimmed; directives cannot. (Each directive resolves the correspondingly-numbered flaw in §0.1.)
 
 **Directive 1: Direct Multi-Step Quantile Forecasting (Kill Autoregression)**
 Autoregressive iteration on financial time-series is **banned**. The system uses sequence-to-sequence direct forecasting, outputting q10/q50/q90 per OHLCV dimension for 15 steps ahead using Pinball loss.
@@ -60,51 +60,44 @@ Edge is measured by null-hypothesis permutation testing (p < 0.05). The null is 
 
 ---
 
-## 0.3 The Signal-First Sanity Check (Pre-Training Gate)
+## 0.3 The Signal-First Sanity Check — Rationale
+
+> The operational spec (the three baselines, the >52% DA gate, best-baseline-Sharpe as the minimum bar PatchTST must clear) is in `feature-pipeline.md` §"Baseline signal check" and `DECISIONS.md` §"Pre-training gate." Only the *why* is preserved here.
 
 **The core principle:** *If a simple model cannot make money, a complex one will not fix it.*
 
-The v2 audits established that PatchTST is the right architecture for the implementation. They did not establish that the *feature pipeline* is producing a learnable signal. Before committing to the 4-week PatchTST training run, a 2-day baseline signal check is mandatory:
+The v2 audits established that PatchTST is the right architecture for the implementation. They did not establish that the *feature pipeline* is producing a learnable signal. Before committing to the 4-week PatchTST training run, a 2-day baseline signal check is mandatory. The check evaluates rule-based strategies on **walk-forward validation folds (not the holdout)**, and is read as a three-way gate:
 
-**Step 1 — No-ML baselines (1 day max):** Implement three rule-based strategies against the already-built feature pipeline and walk-forward splitter:
-- Momentum: go long/short on n-period rolling return sign
-- Mean reversion: go long/short on z-score of price relative to rolling mean
-- Volatility breakout: trade in direction of ATR-normalized price move
-
-Evaluate on walk-forward validation folds (not holdout). Record: Sharpe ratio, max drawdown, directional accuracy per fold.
-
-**Step 2 — Interpretation gate:**
 - If any baseline shows directional accuracy > 52% consistently across folds → feature pipeline has learnable signal → proceed to PatchTST.
 - If no baseline clears 52% on any fold → the feature set, target definition, or horizon is broken. Revisit feature engineering (Phase 0) before any model training.
-
-**Step 3 — Baseline as minimum bar:** The best baseline Sharpe becomes the minimum bar PatchTST must clear in walk-forward evaluation. A transformer that barely beats momentum is not production-ready.
+- The best baseline Sharpe becomes the minimum bar PatchTST must clear. A transformer that barely beats momentum is not production-ready.
 
 This gate costs 2 days maximum. Skipping it and discovering a broken feature pipeline after a 4-week training run costs 4 weeks.
 
 ---
 
-## 1. The v3 Deltas (What Changes from v2, and Why)
+## 1. The v2→v3 Deltas (Frozen Decision Ledger)
 
-This is the diff against `old_project.md §2` "Decisions Made (Locked)." Everything else in §2 carries forward.
+> This is the diff against `old_project.md §2` "Decisions Made (Locked)." Everything else in §2 carries forward. **The "v3" column is a transition-time snapshot — current values live in `DECISIONS.md` and the context cards.** The unique value of these tables is the v2 baseline and the source/rationale columns.
 
 ### 1.1 Predictor
 
-| Decision                   | v2                                                            | v3                                                                                                                                                                                                                                                                | Source / rationale                                                                                                                                                                                                                                   |
-| -------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Architecture               | Decoder-only Transformer, `d_model=128`, full O(L²) attention | **PatchTST** (encoder, patch=16 → 90 tokens at L=1440)                                                                                                                                                                                                            | Predictor M2 / Decision 2. Quadratic attention at 1440 is the binding VRAM constraint on 8GB; PatchTST drops it ~256× while retaining Transformer expressiveness. Also resolves Red Team "RTX 4060 capacity."                                        |
-| Output head                | Gaussian (μ, log σ²) per feature                              | **Quantile q10/q50/q90 per feature**                                                                                                                                                                                                                              | Predictor C2 / Decision 5. Gaussian is wrong distributionally for crypto (fat tails); quantile gives the same calibration signal without the variance-collapse failure mode that produced the v2 negative-NLL bug.                                   |
+| Decision | v2 | v3 | Source / rationale |
+| --- | --- | --- | --- |
+| Architecture | Decoder-only Transformer, `d_model=128`, full O(L²) attention | **PatchTST** (encoder, patch=16 → 90 tokens at L=1440) | Predictor M2 / Decision 2. Quadratic attention at 1440 is the binding VRAM constraint on 8GB; PatchTST drops it ~256× while retaining Transformer expressiveness. Also resolves Red Team "RTX 4060 capacity." |
+| Output head | Gaussian (μ, log σ²) per feature | **Quantile q10/q50/q90 per feature** | Predictor C2 / Decision 5. Gaussian is wrong distributionally for crypto (fat tails); quantile gives the same calibration signal without the variance-collapse failure mode that produced the v2 negative-NLL bug. |
 | Input features | Unspecified (5 features mentioned, never enumerated) | **5 features per candle: open log-return, high log-return, low log-return, close log-return, log1p volume change** | User decision (this conversation). OHLC log-returns are signed unbounded reals; volume change uses log1p to compress heavy tails. All 5 require per-fold MinMaxScaler. |
-| Target                     | Raw relative change                                           | **Log-return per OHLCV dimension**                                                                                                                                                                                                                                | Predictor M3 / Decision 1. Additive across multi-step horizons; symmetric tails. Zero implementation cost.                                                                                                                                           |
-| Horizon / chain            | 100-step iterative autoregressive                             | **15-step direct multi-step**                                                                                                                                                                                                                                     | Predictor C3 / Decision 3 + Red Team C1. Iterative compounding on a misspecified Markovian model is a structural risk, not a tunable. Direct kills exposure bias and aligns training to inference. 15 steps matches the trader's actionable horizon. |
-| Lookback                   | 1,440 (locked by v2 Amendment 8 "intuitively")                | **Sweep [240, 720, 1440] before the long training run**                                                                                                                                                                                                           | Predictor M1 / Decision 4. v2 lookback was justified by intuition only ("missed Asian session"). One sweep round costs <1 week of GPU; chasing it after a 4-week training run costs 4 weeks.                                                         |
-| Loss                       | Gaussian NLL + dense slope composite                          | **Pinball (quantile) + direction penalty (`λ`=1.5–2.0); FEE_THRESHOLD subtracted from predicted per-step PnL inside the loss so the model learns net-of-fee profitable moves**                                                                                                                                                                                                          | Predictor Decision 6 + user decision (fee handling). Natural fit for quantile head. Direction penalty preserves v2 slope-composite intent without coupling to NLL. Loss-side fee accounting means the trader has no hard predicted-move threshold for entry; the model's gradient already pushes toward predictions that survive fees.                                                                                                                  |
-| Geometry enforcement       | Resample-up-to-5x in rollout sampler                          | **Same rule, applied at every inference step**, not just sampler                                                                                                                                                                                                  | Predictor H3. Independent log-returns on O/H/L/C can violate `H≥max(O,C)`; this must be enforced wherever predictions are consumed, including Trader-side mock harnesses.                                                                            |
-| Retrain policy             | "Predictor never retrained; only RL agent"                    | **Dual trigger: (1) conditional — 7-day NLL or quantile coverage > 2.0× baseline → manual retrain; (2) calendar — 30-day maximum gap regardless of drift metrics**                                                                                                | Red Team C4 / Decision 1 + Predictor H2 / Ops C4 + Gemini §6. Conditional catches sudden regime shifts; calendar bound prevents silent staleness. Warm-start from prior checkpoint when triggered.                                                   |
-| Retrain deploy gates       | None                                                          | **All three gates must pass before deployment:** (a) quantile coverage on locked test set within ±5% of original training-time coverage; (b) Directional Accuracy > 53.5% computed only over predictions where `\|q50\| > FEE_THRESHOLD`; (c) Calibration rate between 75–85%                                                    | Claude §2 + Gemini §6 + user decision. No single metric captures all failure modes. The `\|q50\| > FEE_THRESHOLD` filter on DA prevents the gate from being satisfied by accuracy on sub-fee moves that aren't tradeable.                                                                                                                                                                                  |
-| Holdout size               | 50,000 candles ("the last 3 months")                          | **120,960 candles (84 days × 1440 = 12 × 1-week)**                                                                                                                                                                                                                              | Predictor C4 + user decision. Pure arithmetic correction; 50k = ~35 days, not 3 months. Aligned exactly to the 12 × 1-week walk-forward gate so each gate window is a unique, non-overlapping holdout slice.                                                                                                               |
-| Holdout evaluation         | Single terminal block                                         | **Walk-forward inside the holdout: 12 × 1-week non-overlapping windows; gate requires positive Sortino on median AND worst-week**                                                                                                                                 | Predictor Decision 7 + Red Team Decision 2. Stronger than a single-block holdout without sacrificing the "evaluated once" guarantee. Regime-stratified — must be positive in trending AND ranging sub-periods.                                       |
-| Retraining holdout overlap | "7-day overlap, fix in v2"                                    | **Strictly non-overlapping: fine-tune on `[t-21, t-7]`, gate on `[t-7, t]`**                                                                                                                                                                                      | Red Team H1 / Decision 3 + Predictor M5. Non-negotiable; the v2 carry-forward language is self-deception.                                                                                                                                            |
-| Predictor-training bug-prevention    | Fixes documented after the fact                               | **Three regression tests written before the training loop:** variance-floor on output (`assert loss > 0` for first 100 steps), trend-loss synthetic input (constant candles → known non-zero output), early-stopping patience parameter exposed in `constants.py` | Red Team `predictor-training bugs all three are v3 risks` + Build-Order item 12. All three v2 bugs were in predictor training. Re-encountering them mid-training costs days; preventing them costs hours.                                                                |
+| Target | Raw relative change | **Log-return per OHLCV dimension** | Predictor M3 / Decision 1. Additive across multi-step horizons; symmetric tails. Zero implementation cost. |
+| Horizon / chain | 100-step iterative autoregressive | **15-step direct multi-step** | Predictor C3 / Decision 3 + Red Team C1. Iterative compounding on a misspecified Markovian model is a structural risk, not a tunable. Direct kills exposure bias and aligns training to inference. 15 steps matches the trader's actionable horizon. |
+| Lookback | 1,440 (locked by v2 Amendment 8 "intuitively") | **Sweep [240, 720, 1440] before the long training run** | Predictor M1 / Decision 4. v2 lookback was justified by intuition only ("missed Asian session"). One sweep round costs <1 week of GPU; chasing it after a 4-week training run costs 4 weeks. |
+| Loss | Gaussian NLL + dense slope composite | **Pinball (quantile) + direction penalty (`λ`=1.5–2.0); FEE_THRESHOLD subtracted from predicted per-step PnL inside the loss so the model learns net-of-fee profitable moves** | Predictor Decision 6 + user decision (fee handling). Natural fit for quantile head. Direction penalty preserves v2 slope-composite intent without coupling to NLL. Loss-side fee accounting means the trader has no hard predicted-move threshold for entry; the model's gradient already pushes toward predictions that survive fees. |
+| Geometry enforcement | Resample-up-to-5x in rollout sampler | **Same rule, applied at every inference step**, not just sampler | Predictor H3. Independent log-returns on O/H/L/C can violate `H≥max(O,C)`; this must be enforced wherever predictions are consumed, including Trader-side mock harnesses. |
+| Retrain policy | "Predictor never retrained; only RL agent" | **Dual trigger: (1) conditional — 7-day NLL or quantile coverage > 2.0× baseline → manual retrain; (2) calendar — 30-day maximum gap regardless of drift metrics** | Red Team C4 / Decision 1 + Predictor H2 / Ops C4 + Gemini §6. Conditional catches sudden regime shifts; calendar bound prevents silent staleness. Warm-start from prior checkpoint when triggered. |
+| Retrain deploy gates | None | **All three gates must pass before deployment:** (a) quantile coverage on locked test set within ±5% of original training-time coverage; (b) Directional Accuracy > 53.5% computed only over predictions where `\|q50\| > FEE_THRESHOLD`; (c) Calibration rate between 75–85% | Claude §2 + Gemini §6 + user decision. No single metric captures all failure modes. The `\|q50\| > FEE_THRESHOLD` filter on DA prevents the gate from being satisfied by accuracy on sub-fee moves that aren't tradeable. |
+| Holdout size | 50,000 candles ("the last 3 months") | **120,960 candles (84 days × 1440 = 12 × 1-week)** | Predictor C4 + user decision. Pure arithmetic correction; 50k = ~35 days, not 3 months. Aligned exactly to the 12 × 1-week walk-forward gate so each gate window is a unique, non-overlapping holdout slice. |
+| Holdout evaluation | Single terminal block | **Walk-forward inside the holdout: 12 × 1-week non-overlapping windows; gate requires positive Sortino on median AND worst-week** | Predictor Decision 7 + Red Team Decision 2. Stronger than a single-block holdout without sacrificing the "evaluated once" guarantee. Regime-stratified — must be positive in trending AND ranging sub-periods. |
+| Retraining holdout overlap | "7-day overlap, fix in v2" | **Strictly non-overlapping: fine-tune on `[t-21, t-7]`, gate on `[t-7, t]`** | Red Team H1 / Decision 3 + Predictor M5. Non-negotiable; the v2 carry-forward language is self-deception. |
+| Predictor-training bug-prevention | Fixes documented after the fact | **Three regression tests written before the training loop:** variance-floor on output (`assert loss > 0` for first 100 steps), trend-loss synthetic input (constant candles → known non-zero output), early-stopping patience parameter exposed in `constants.py` | Red Team `predictor-training bugs all three are v3 risks` + Build-Order item 12. All three v2 bugs were in predictor training. Re-encountering them mid-training costs days; preventing them costs hours. |
 
 ### 1.2 Trader
 
@@ -173,7 +166,7 @@ Compare against `old_project.md §3` "Open Questions": every Q1–Q13 listed the
 
 ---
 
-## 3. Build Order
+## 3. Build Order & Parallel-Work Plan
 
 ### 3.0 Phase Structure
 
@@ -232,98 +225,11 @@ Justification thread for all four: things that fail silently must be caught by t
 | **3** | Vectorized backtester against mock; lookahead-bias regression suite as CI on every PR touching `src/data/`; walk-forward holdout evaluator (12 × 1-week); regime-stratified P&L; FastAPI + vanilla JS + Lightweight Charts dashboard scaffold; predictor accuracy panel with q10/q90 percentile overlay; checkpoint backup to OneDrive. | Dashboard renders mock data end-to-end with quantile bands visible; backtester ready to consume real weights; checkpoint backup automated. |
 | **4** | `retrain_predictor.py` + `deploy_predictor.py` (built, NOT run); hot-reload weight swap with SHA256 verify on every reload; **Chaos testing protocol** (kill engine mid-trade, disconnect internet, verify watchdog catches it, verify graceful failure + position auto-close); final docs pass; full Tests 1–10 re-run; pre-launch checklist (kill criteria K1–K9 wired, exchange-native stop on every entry). | Training completes (or: see R3). System ready to consume new weights and start paper dry-run within hours. Chaos tests green. |
 
-### 3.4 Robustness & Stress Test Gate (Pre-Paper-Trading)
-
-Before moving from mock-predictor loop to live paper trading, run the following robustness checks. These are adapted from the signal-validation framework (ChatGPT §Phase 5) applied at the system level:
-
-1. **Feature ablation:** Remove each input feature one at a time; confirm Trader degrades gracefully (falls back to flat) rather than producing nonsense allocations.
-2. **Noise injection:** Add Gaussian noise (σ = 0.5× typical ATR) to predictor outputs; confirm kill criteria trigger before catastrophic drawdown.
-3. **Different time period validation:** Run backtester on 2020 (COVID crash) and 2022 (FTX collapse) sub-periods explicitly. Gate: system does not blow up in regime transitions.
-4. **System chaos (from Gemini Week 15 protocol):** Kill engine mid-trade; disconnect internet; restart under active position; verify watchdog + exchange-native stop catches each case.
-
-All four must pass. Failures here are cheaper to fix than failures in paper trading with a real predictor.
-
-### 3.5 Gates Between Phases
-
-| Gate | Pass Condition |
-|---|---|
-| **Pre-training** | Baseline signal check (§0.3) passes. All 13 critical-path items green. Smoke run produces non-NaN loss, no OOM at batch=16. |
-| **Pre-paper-trading** | Walk-forward 12×1w gate: positive Sortino on median AND worst-week. Regime-stratified: positive in trending AND ranging. Stop-loss net PnL evaluated identically in environment, backtester, and live execution. SHA256 manifest verified. ExecutionBackend parity test green. UTC + Windows-DST simulation tests green. Kill switch 4-case test green. Position reconciliation works against real Kraken. **Robustness & stress test gate (§3.4) green.** |
-| **Pre-live capital** | All paper-trading gates plus: 1 month minimum paper, regime-stratified positive, **permutation test on trade PnL distribution vs. random buy/sell signals applied to the same real price series at the bot's actual trade frequency, with p < 0.05** (not t-test). LiveBackend implemented and parity-tested against PaperBackend. Exchange-native stop-loss on every entry. Kraken API key scope verified programmatically (trade only — no withdraw, no deposit). Kill criteria K1–K9 wired in code (auto-shutdown items NOT operator-overridable). Disaster recovery runbook written and rehearsed. |
+> **Pre-paper robustness/stress gate (former §3.4) and the inter-phase gate table (former §3.5)** were dropped from this record because they are fully captured, and authoritative, in `DECISIONS.md` (§"Pre-paper gate", §"Pre-live gate", §"Pre-training gate"), `splits-validation.md` (§"Robustness gate", §"Walk-forward 12×1w gate", §"Permutation test"), and `trader-rules.md` (§"Robustness gate"). Their source attributions survive in Appendix A below.
 
 ---
 
-## 4. Directory Structure
-
-Locked from `old_project.md §2` "File structure" + Structure audit recommendation. No deviation without `CHANGELOG.md` entry.
-
-```
-btc-bot-v3/
-├── CLAUDE.md                          # Claude Code orientation, ~3KB
-├── DECISIONS.md                       # Flat key→value locked decisions, ~4KB
-├── CHANGELOG.md                       # Append-only amendments to DECISIONS
-├── INDEX.md                           # Task → ≤3 files mapping, ~2KB
-├── NOTES.md                           # Scratch notes; not a decision record
-├── constants.py                       # Frozen dataclasses (PredictorConfig etc.)
-├── agent_config.json                  # Runtime: SHA256, atr_median, paths
-├── pyproject.toml                     # Deps, lint config
-│
-├── feature-pipeline.md                # context card: 5 features, scaler contract, log1p
-├── predictor-contract.md              # context card: I/O shapes, quantile head, SHA256
-├── predictor-training.md              # context card: PatchTST, pinball+direction loss
-├── trader-rules.md                    # context card: sizing, confidence gate, exit stack
-├── execution-engine.md                # context card: 60s loop, fees, kill switch, stops
-├── dashboard.md                       # context card: Trading Dashboard (telemetry + kill)
-├── training-dashboard.md              # context card: Training Dashboard (controls + metrics)
-├── agent-config.md                    # context card: agent_config.json schema
-├── splits-validation.md               # context card: WF folds, locked test set, gates
-│
-├── docs/
-│   └── archive/                        # v2 history + original audits (never loaded in sessions)
-│
-├── src/
-│   ├── data/                          # Ingest, validator, feature pipeline, scaler, splitter
-│   ├── predictor/                     # PatchTST, loss, training loop, rollout
-│   ├── trader/                        # Rules, sizing, exit stack, confidence gate
-│   ├── execution/                     # asyncio loop, ExecutionBackend, watchdog, alerter
-│   ├── dashboard/                     # Trading dashboard: FastAPI, WebSocket, static frontend
-│   └── training_ui/                   # Training dashboard: controls, live metrics, data gate
-│
-├── tests/                             # Mirrors src/ exactly; one test file per module
-│   ├── data/
-│   ├── predictor/
-│   ├── trader/
-│   ├── execution/
-│   ├── dashboard/
-│   └── training_ui/
-│
-├── scripts/                           # One-time runners; src/ NEVER imports from here
-│   ├── train_predictor.py
-│   ├── retrain_predictor.py
-│   ├── deploy_predictor.py
-│   └── backtest_results/
-│
-├── data/
-│   ├── raw/                           # Write-once Kraken OHLCVT
-│   ├── processed/2026-MM-DD/          # Date-stamped subdirs; scalers stored alongside
-│   └── test_locked/                   # 120,960 candles; src/ NEVER references this
-│
-├── checkpoints/
-│   └── {component}_{wandb_run_id}_{sha256[:8]}.pt
-│
-└── logs/                              # Rotating JSON logs, 10MB × 30 files
-```
-
-**Hard rules** (encoded in CLAUDE.md and as merge checks):
-- `src/` never imports from `scripts/`. Justification: scripts are one-time runners that call deep into `src/`; the inverse path creates circular maintenance.
-- `data/test_locked/` never referenced in `src/`. Enforced by both `grep -r 'test_locked' src/` CI step AND `sys.settrace` runtime guard during training (Red Team Test 10).
-- All magic numbers go in `constants.py` in their named frozen dataclass — no bare module-level constants.
-- All tests written and committed before implementation; git log order verified by `test-enforcer` subagent.
-- All timestamps use `datetime.timezone.utc` explicitly. CI test asserts no `datetime.now()` without `tz=` anywhere in `src/`.
-
----
-
-## 5. Token-Efficiency Strategy (Priority Constraint)
+## 5. Token-Efficiency Strategy
 
 The user's explicit priority is reducing token usage with one task per chat. The structure of this project is designed around it, not bolted on.
 
@@ -339,24 +245,7 @@ Target per session: **8–11KB loaded before touching code** (~2,000–2,800 tok
 
 `INDEX.md` is the lookup table — Claude Code never speculatively loads files. Every entry in INDEX names ≤3 files; if a task needs more, the cards are too granular OR the task is too coarse. Re-split.
 
-### 5.2 INDEX.md Task→Files Mapping
-
-Tasks are imperative verb phrases (matching how the user opens chats). Sample (from Structure audit, extended for v3 deltas):
-
-| Task | Load these files |
-|---|---|
-| Add a new candle feature | `feature-pipeline.md`, `constants.py`, `src/data/feature_pipeline.py` |
-| Audit for data leakage | `feature-pipeline.md`, `DECISIONS.md` (leakage section) |
-| Change the stop-loss formula | `trader-rules.md`, `constants.py` |
-| Change the predictor lookback | `DECISIONS.md`, `predictor-contract.md`, `constants.py` |
-| Debug a predictor training loop issue | `predictor-training.md`, `src/predictor/loss.py` |
-| Deploy a new predictor checkpoint | `agent-config.md`, `scripts/deploy_predictor.py`, `agent_config.json` |
-| Implement a new trader exit rule | `trader-rules.md`, `constants.py`, `src/trader/exit_priority.py` |
-| Set up a new walk-forward fold | `splits-validation.md`, `constants.py`, `src/data/walk_forward.py` |
-| Wire the kill-switch flag check | `execution-engine.md`, `src/execution/watchdog.py` |
-| Write the execution engine 60s loop | `execution-engine.md`, `DECISIONS.md` |
-| Run the baseline signal check | `feature-pipeline.md`, `scripts/baseline_signal_check.py` |
-| Run retrain deploy gates | `predictor-contract.md`, `scripts/deploy_predictor.py`, `DECISIONS.md` |
+> The sample task→files mapping that was former §5.2 lives, authoritatively, in `INDEX.md` and was dropped from this record to avoid duplication.
 
 ### 5.3 Failure Modes and Structural Defenses
 
@@ -407,7 +296,7 @@ From `old_project.md §4` "Considered, no firm decision": ECC (everything-claude
 
 ---
 
-## 7. CLAUDE.md Structure (For the Actual File)
+## 7. CLAUDE.md Structure (Original Outline)
 
 The `CLAUDE.md` written into the repo before the first coding session contains, in this order:
 
@@ -445,12 +334,7 @@ Distilled from Build-Order risk register R1–R10, augmented by Red Team K-set c
 | R11 | Retrain deploy gates (DA, calibration) pass on lucky holdout week. | Gates require 3-week minimum fine-tune window; deploy gate evaluated on a fresh holdout week not seen in fine-tuning. All three gates (coverage ±5%, DA > 53.5%, Cal 75–85%) must pass simultaneously. |
 | R12 | Exchange-native stop-loss silently fails to place. | Execution engine asserts stop-loss order confirmation before marking position open. If confirmation doesn't arrive in N seconds, auto-close any partial fill and alert via sound/beep. |
 
-### 8.1 Kill Criteria Summary (K1–K9 from Red Team)
-
-Auto-shutdown (no operator override): K1 (3% session drawdown, 24h rolling), K2 (10% total drawdown), K4 (NLL > 2.0× baseline 7d), K8 (5min stale-candle).
-Alert + manual review: K3 (7d PnL anomaly), K5 (calibration < 50% × 3d), K6 (zero trades 4h), K7 (win rate <40% × 3d), K9 (latency >55s × 3 cycles).
-
-All K-criteria wired in code in the execution engine — not as documentation. Auto-shutdown criteria have no operator-override path. K-set is encoded in `constants.py` `ExecutionConfig` dataclass.
+> The **Kill Criteria Summary (former §8.1, K1–K9)** was dropped from this record: the full K-set with auto-shutdown-vs-alert classification is authoritative in `DECISIONS.md` (§"Execution engine", keys `kill_criteria_K1`…`K9`) and `execution-engine.md` (§"Alert thresholds"). All K-criteria are wired in code in the execution engine, encoded in `constants.py` `ExecutionConfig`; auto-shutdown criteria (K1, K2, K4, K8) have no operator-override path.
 
 ---
 
@@ -531,9 +415,9 @@ These resources are not a prerequisite for starting — they are parallel work f
 
 ---
 
-## 13. What This Plan Does NOT Cover
+## 13. What This Plan Did NOT Cover
 
-For traceability:
+For traceability (as of plan authoring; several have since been delivered):
 
 - The actual content of `DECISIONS.md` (next deliverable; this document justifies it).
 - The actual content of each context card (`*.md` at repo root; one per coding-task domain; ≤1.5KB each).
@@ -541,6 +425,76 @@ For traceability:
 - The full backtest harness specification (parallel work week 3; references `execution-engine.md` for fee/slippage rules).
 - The retrain workflow scripts beyond their existence in `/scripts/` and their gate criteria.
 - Anything explicitly deferred in §9.
+
+---
+
+## 4. Reference — Locked Directory Structure
+
+Locked from `old_project.md §2` "File structure" + Structure audit recommendation. No deviation without `CHANGELOG.md` entry. (Retained here as the original architectural reference; the live tree is whatever is on disk.)
+
+```
+btc-bot-v3/
+├── CLAUDE.md                          # Claude Code orientation, ~3KB
+├── DECISIONS.md                       # Flat key→value locked decisions, ~4KB
+├── CHANGELOG.md                       # Append-only amendments to DECISIONS
+├── INDEX.md                           # Task → ≤3 files mapping, ~2KB
+├── NOTES.md                           # Scratch notes; not a decision record
+├── constants.py                       # Frozen dataclasses (PredictorConfig etc.)
+├── agent_config.json                  # Runtime: SHA256, atr_median, paths
+├── pyproject.toml                     # Deps, lint config
+│
+├── feature-pipeline.md                # context card: 5 features, scaler contract, log1p
+├── predictor-contract.md              # context card: I/O shapes, quantile head, SHA256
+├── predictor-training.md              # context card: PatchTST, pinball+direction loss
+├── trader-rules.md                    # context card: sizing, confidence gate, exit stack
+├── execution-engine.md                # context card: 60s loop, fees, kill switch, stops
+├── dashboard.md                       # context card: Trading Dashboard (telemetry + kill)
+├── training-dashboard.md              # context card: Training Dashboard (controls + metrics)
+├── agent-config.md                    # context card: agent_config.json schema
+├── splits-validation.md               # context card: WF folds, locked test set, gates
+│
+├── docs/
+│   └── archive/                        # v2 history + original audits (never loaded in sessions)
+│
+├── src/
+│   ├── data/                          # Ingest, validator, feature pipeline, scaler, splitter
+│   ├── predictor/                     # PatchTST, loss, training loop, rollout
+│   ├── trader/                        # Rules, sizing, exit stack, confidence gate
+│   ├── execution/                     # asyncio loop, ExecutionBackend, watchdog, alerter
+│   ├── dashboard/                     # Trading dashboard: FastAPI, WebSocket, static frontend
+│   └── training_ui/                   # Training dashboard: controls, live metrics, data gate
+│
+├── tests/                             # Mirrors src/ exactly; one test file per module
+│   ├── data/
+│   ├── predictor/
+│   ├── trader/
+│   ├── execution/
+│   ├── dashboard/
+│   └── training_ui/
+│
+├── scripts/                           # One-time runners; src/ NEVER imports from here
+│   ├── train_predictor.py
+│   ├── retrain_predictor.py
+│   ├── deploy_predictor.py
+│   └── backtest_results/
+│
+├── data/
+│   ├── raw/                           # Write-once Kraken OHLCVT
+│   ├── processed/2026-MM-DD/          # Date-stamped subdirs; scalers stored alongside
+│   └── test_locked/                   # 120,960 candles; src/ NEVER references this
+│
+├── checkpoints/
+│   └── {component}_{wandb_run_id}_{sha256[:8]}.pt
+│
+└── logs/                              # Rotating JSON logs, 10MB × 30 files
+```
+
+**Hard rules** (encoded in CLAUDE.md and as merge checks):
+- `src/` never imports from `scripts/`. Justification: scripts are one-time runners that call deep into `src/`; the inverse path creates circular maintenance.
+- `data/test_locked/` never referenced in `src/`. Enforced by both `grep -r 'test_locked' src/` CI step AND `sys.settrace` runtime guard during training (Red Team Test 10).
+- All magic numbers go in `constants.py` in their named frozen dataclass — no bare module-level constants.
+- All tests written and committed before implementation; git log order verified by `test-enforcer` subagent.
+- All timestamps use `datetime.timezone.utc` explicitly. CI test asserts no `datetime.now()` without `tz=` anywhere in `src/`.
 
 ---
 
@@ -600,4 +554,4 @@ For every concrete disagreement between the three source plans, this table recor
 
 ---
 
-*End of v3 Master Consolidated Plan. Next deliverable: `DECISIONS.md` — flat key/value, ≤4KB, locked from this document's §1.*
+*Frozen historical record, distributed from `consolidated-consolidated-plan.md` (originally dated 2026-05-07). The live source of truth is `DECISIONS.md` + the context cards + `INDEX.md`.*
