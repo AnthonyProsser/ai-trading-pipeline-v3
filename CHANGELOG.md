@@ -13,10 +13,12 @@ Format:
 
 ---
 
-## [Unreleased]
-- `ExecutionConfig.AGENT_CONFIG_SCHEMA_VERSION`: absent → `"1.0"` (moved from a bare module-level `SCHEMA_VERSION` constant in `scripts/deploy_predictor.py` into `constants.py`, per the "no bare module-level constants / magic numbers live in constants.py" rule). Value unchanged; deploy now reads `EXECUTION.AGENT_CONFIG_SCHEMA_VERSION`.
-- Reason: code-review audit — bare module-level constant outside `constants.py`.
+## 2026-06-28 — Move agent_config schema version into constants.py
+- ExecutionConfig.AGENT_CONFIG_SCHEMA_VERSION: absent → `"1.0"`
+- Reason: code-review audit flagged a bare module-level `SCHEMA_VERSION = "1.0"` in `scripts/deploy_predictor.py`, violating the "no bare module-level constants / magic numbers live in constants.py" rule. Value unchanged; deploy now reads `EXECUTION.AGENT_CONFIG_SCHEMA_VERSION`. Same audit pass (no other decision values changed): validator rejects NaN/inf candles; `train_one_fold` guards empty `train_loader` + non-finite val loss and reports epoch-averaged train loss; `verify_manifest` rejects uncovered artifacts; scaler gains `transform_inference` so deploy no longer re-implements the scaling formula.
 - Source: audit
+
+## 2026-06-28 — Retire gdown ingest; manual CSV placement
 - Removed `scripts/ingest_kraken_history.py` (Google Drive / gdown bootstrap ingest). The raw `BTCUSD_1.csv` is now placed into `data/raw/` manually (drag-and-drop) instead of being downloaded.
 - Dropped dead dependencies `browser-cookie3` and `gdown` from `pyproject.toml` (regenerated `uv.lock`); removed the script's per-file ruff ignore.
 - Cleaned remaining references in `CLAUDE.md`, `INDEX.md`, `dashboard.md`, `consolidated-consolidated-plan.md`, `.gitignore`, and the `train_predictor.py` "csv not found" message.
