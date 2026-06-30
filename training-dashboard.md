@@ -6,13 +6,13 @@ Browser-based app (FastAPI + vanilla JS, no React) for managing and monitoring m
 
 ## First-run: Download Data screen
 
-Shown when `data/raw/BTCUSD_1.csv` is absent. All training controls are disabled until data is present.
+Shown when `data/raw/XBTUSD_1.csv` is absent. All training controls are disabled until data is present.
 
 - Short instruction paragraph explaining the requirement.
 - Google Drive link derived from `DATA.KRAKEN_HISTORY_GDRIVE_ID` (no hardcoded ID in frontend).
 - Drag-and-drop zone accepting the Kraken zip or a bare CSV.
   - Zip: server extracts `DATA.KRAKEN_HISTORY_INNER_PATH` member only.
-  - CSV: written directly to `data/raw/BTCUSD_1.csv`.
+  - CSV: written directly to `data/raw/XBTUSD_1.csv`.
   - Atomic write via temp-file-then-rename.
   - Returns `{"status": "ok", "rows": <row_count>}` on success.
 - On success: page transitions to the normal training dashboard without manual refresh.

@@ -22,8 +22,12 @@ class DataConfig:
     HISTORICAL_START: str = "2018-01-01"
 
     # Bootstrap ingest
+    # KRAKEN_DATA_PATH env var points to the local Google Drive sync of Kraken_OHLCVT.zip
+    # (Google Drive for Desktop, G:\My Drive\Kraken_OHLCVT.zip).
+    KRAKEN_LOCAL_ZIP_ENV_VAR: str = "KRAKEN_DATA_PATH"
     KRAKEN_HISTORY_GDRIVE_ID: str = "1ptNqWYidLkhb2VAKuLCxmp2OXEfGO-AP"
-    KRAKEN_HISTORY_INNER_PATH: str = "master_q4/BTCUSD_1.csv"
+    KRAKEN_HISTORY_INNER_PATH: str = "master_q4/XBTUSD_1.csv"
+    KRAKEN_HISTORY_CSV_NAME: str = "XBTUSD_1.csv"
     KRAKEN_HISTORY_ZIP_STEM: str = "kraken_master_q4"
     KRAKEN_HISTORY_OUT_DIR: str = "data/raw"
     KRAKEN_HISTORY_CACHE_DIR: str = "data/.cache"
