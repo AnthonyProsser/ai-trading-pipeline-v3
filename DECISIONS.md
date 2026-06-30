@@ -33,6 +33,8 @@ Last consolidated: 2026-06-28
 - **retrain_window**: fine-tune on `[t-21, t-7]`, gate on `[t-7, t]` — strictly non-overlapping
 - **retrain_warm_start**: from prior checkpoint
 - **deploy_gates** (all three required, simultaneously): (a) quantile coverage on locked test set within ±5% of original training-time coverage; (b) Directional Accuracy > 53.5% computed only over predictions where `|q50| > FEE_THRESHOLD`; (c) Calibration rate 75–85%
+- **deploy_gates_output_dim**: `close_logret` — all three gates evaluate the Close dimension only. Rationale: execution fills at close-of-candle; Close is the tradeable signal. Consistent with the close-dim direction penalty in the loss and the trader's close-based confidence gate.
+- **deploy_gates_quantile_index_pattern**: `PREDICTOR.QUANTILES.index(value)` called once at module scope into private constants (`_Q10`, `_Q50`, `_Q90`). No alias integer constants (`Q10_IDX = 0` etc.) in `constants.py`. The `.index()` call is self-documenting and robust — if the tuple order ever changes, it auto-corrects; a hardcoded `0` would silently break.
 - **bug_regression_tests** (must pass before training loop ships): variance-floor (`assert loss > 0` for first 100 steps), trend-loss synthetic-input (constant candles → known non-zero output), early-stopping patience exposed in `constants.py`
 
 ## Trader
@@ -86,10 +88,11 @@ Last consolidated: 2026-06-28
 - **training_ui_metrics**: live display via WebSocket or SSE — fold index, epoch, train loss (pinball + direction), val loss, epoch ETA, fold ETA, total run ETA.
 - **training_ui_alerts**: browser notification banner + winsound.Beep (server-side) on fold complete, training error, or early-stop trigger; structured JSON log (same log sink as rest of pipeline).
 - **training_ui_export**: on each fold completion, append a fold summary record to `training_metrics.json` (path in `PredictorConfig`). This file is the handoff artifact for Claude optimization review. Schema: fold index, train/val loss, DA, quantile coverage, duration seconds, hyperparams snapshot.
-- **training_ui_data_gate**: on startup, check for `data/raw/BTCUSD_1.csv`. If absent, show a "Download Data" screen before any training controls are enabled. The screen has: (a) a short instruction paragraph, (b) the Google Drive URL derived from `DATA.KRAKEN_HISTORY_GDRIVE_ID`, (c) a drag-and-drop zone accepting the Kraken zip or a bare CSV. On successful upload, transitions to the normal training dashboard. Uses `POST /api/setup/upload-data` (shared implementation with the trading dashboard's setup router).
+- **training_ui_data_gate**: on startup, check for `data/raw/XBTUSD_1.csv` (i.e. `DATA.KRAKEN_HISTORY_CSV_NAME`). If absent, show a "Download Data" screen before any training controls are enabled. The screen has: (a) a short instruction paragraph, (b) the Google Drive URL derived from `DATA.KRAKEN_HISTORY_GDRIVE_ID`, (c) a drag-and-drop zone accepting the Kraken zip or a bare CSV. On successful upload, transitions to the normal training dashboard. Uses `POST /api/setup/upload-data` (shared implementation with the trading dashboard's setup router).
 
 ## Cross-cutting
 
+- **kraken_training_pair**: `XBTUSD` — Kraken's original BTC/USD pair. Inner zip path `master_q4/XBTUSD_1.csv`, extracted to `data/raw/XBTUSD_1.csv`. Data spans 2013-10-07 to 2025-12-31 (244.8 MB, no-header format). `BTCUSD` rejected: only starts 2022-01-01 (2 years), below the 2018-01-01 `historical_start` requirement.
 - **historical_start**: 2018-01-01 (covers 2018 bear, 2020 DeFi, 2021 institutional, 2022 FTX, 2023+ ETF era; pre-2017 microstructure rejected)
 - **walk_forward_train_val_test**: 150,000 / 50,000 / 10,000 candles
 - **walk_forward_stride**: 50,000 (= validation block; non-overlapping validation folds)

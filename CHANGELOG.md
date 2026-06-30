@@ -13,6 +13,24 @@ Format:
 
 ---
 
+## 2026-06-29 — Fix stale BTCUSD references after pair switch
+- training_ui_data_gate: `data/raw/BTCUSD_1.csv` → `data/raw/XBTUSD_1.csv` (i.e. `DATA.KRAKEN_HISTORY_CSV_NAME`)
+- Reason: decisions-auditor flagged internal inconsistency — kraken_training_pair was updated to XBTUSD but training_ui_data_gate still referenced BTCUSD_1.csv. Also updated training-dashboard.md and CLAUDE.md repo-state to match.
+- Source: decisions-auditor finding (2026-06-29)
+
+## 2026-06-29 — Switch training data to XBTUSD; record Kraken pair decision
+- kraken_training_pair: absent → `XBTUSD` (`master_q4/XBTUSD_1.csv`, 2013-10-07 to 2025-12-31)
+- DataConfig.KRAKEN_HISTORY_INNER_PATH: `"master_q4/BTCUSD_1.csv"` → `"master_q4/XBTUSD_1.csv"`
+- DataConfig.KRAKEN_HISTORY_CSV_NAME: absent → `"XBTUSD_1.csv"`
+- Reason: BTCUSD_1.csv only covers 2022-01-01 to 2024-01-01 (2 years), below the 2018-01-01 historical_start requirement. XBTUSD is Kraken's original/primary pair with 12+ years of data. XBTUSD also uses no-header format consistent with np.loadtxt in load_real_candles; BTCUSD's header row would break the loader.
+- Source: user directive (conversation 2026-06-29)
+
+## 2026-06-29 — Record deploy-gates output dimension and quantile-index pattern
+- deploy_gates_output_dim: absent → `close_logret` (Close dimension only; execution fills at close-of-candle; consistent with close-dim direction penalty in loss and trader confidence gate)
+- deploy_gates_quantile_index_pattern: absent → `PREDICTOR.QUANTILES.index(value)` at module scope into private constants; no alias integer constants in `constants.py` (self-documenting and tuple-order-robust)
+- Reason: code in `deploy_gates.py` made both choices without an explicit DECISIONS.md entry. User confirmed both during Phase 1 review.
+- Source: user directive (conversation 2026-06-29)
+
 ## 2026-06-28 — Move agent_config schema version into constants.py
 - ExecutionConfig.AGENT_CONFIG_SCHEMA_VERSION: absent → `"1.0"`
 - Reason: code-review audit flagged a bare module-level `SCHEMA_VERSION = "1.0"` in `scripts/deploy_predictor.py`, violating the "no bare module-level constants / magic numbers live in constants.py" rule. Value unchanged; deploy now reads `EXECUTION.AGENT_CONFIG_SCHEMA_VERSION`. Same audit pass (no other decision values changed): validator rejects NaN/inf candles; `train_one_fold` guards empty `train_loader` + non-finite val loss and reports epoch-averaged train loss; `verify_manifest` rejects uncovered artifacts; scaler gains `transform_inference` so deploy no longer re-implements the scaling formula.

@@ -79,7 +79,7 @@ Solo paper-trading BTC bot. Three components: **Predictor** (PatchTST encoder, 1
 **Build phase (pre-training gate).** Building phase by phase toward a green smoke run.
 
 - **Phase 0 (Data)** — COMPLETE, merged to `main`. `src/data/` (feature_pipeline, scaler, walk_forward, validator, manifest) and matching `tests/data/` are fully green.
-- **Phase 1 (Predictor)** — modules COMPLETE on `phase-1-predictor` (PR pending). All built tests-first and green (68 tests): `early_stopping.py`, `loss.py`, `rollout.py` (geometry enforcement), `model.py` (channel-mixing PatchTST), `training.py` (`build_fold_loaders` + `train_one_fold`), `deploy_gates.py`; plus `scripts/train_predictor.py` (`--smoke`/`--synthetic`) and `scripts/deploy_predictor.py`. The **synthetic** GPU smoke passed on the 4060 (lookback 1440, batch 32, finite loss, no OOM/NaN). The **real-data** smoke is still pending: `data/raw/BTCUSD_1.csv` is absent (manually drag-and-drop the CSV into `data/raw/`, then `uv run python scripts/train_predictor.py --smoke`). `deploy_predictor.py` runs end-to-end only once a trained checkpoint + locked test set exist. W&B is not installed (offline-capable flag wired; `uv add wandb` to enable).
+- **Phase 1 (Predictor)** — modules COMPLETE, merged to `main` (PR #12 merged 2026-06-29). 82 tests green. `early_stopping.py`, `loss.py`, `rollout.py`, `model.py`, `training.py`, `deploy_gates.py`; plus `scripts/train_predictor.py` (`--smoke`/`--synthetic`) and `scripts/deploy_predictor.py`. Synthetic GPU smoke passed on the 4060. **Real-data smoke still pending** — `data/raw/XBTUSD_1.csv` is extracted; run `uv run python scripts/train_predictor.py --smoke`. `deploy_predictor.py` runs end-to-end only once a trained checkpoint + locked test set exist. W&B is not installed (offline-capable flag wired; `uv add wandb` to enable). **Train→deploy pipeline not connected** — `train_predictor.py` does not yet save weights; `deploy_predictor.py` requires `--checkpoint/--scaler/--train-coverage`. Three decisions needed in `DECISIONS.md` before wiring: checkpoint dir/filename convention, save format, and save policy.
 - **Phases 2–4** — not started. `src/execution/`, `src/trader/`, `src/dashboard/` do not exist.
 
 `scripts/train_predictor.py` and `scripts/deploy_predictor.py` exist. Other scripts (e.g. `backtest.py`, `holdout_evaluator.py`, `permutation_test.py`) are planned deliverables — they do not exist yet.
@@ -113,6 +113,7 @@ Read first, every coding session, in this order: `DECISIONS.md` → `INDEX.md` �
 - **One branch per phase:** `phase-XY` off `main`; merged to `main` at phase exit. Never commit to `main` directly.
 - **Any `DECISIONS.md` change requires a `CHANGELOG.md` entry in the same commit.**
 - **Flag every unspecced decision.** If a task requires a value not in `DECISIONS.md` or `constants.py`, stop and ask. Do not "use a reasonable default" — this aligns with Karpathy §1.
+- **Update `CLAUDE.md` (Repo state section) after every completed feature or phase.** It is the first file read every session — stale repo-state causes wasted work at session start.
 
 ### Custom agents — mandatory trigger rules
 
