@@ -13,6 +13,21 @@ Format:
 
 ---
 
+## 2026-06-29 — Deploy reads gate inputs from the checkpoint (val-split coverage baseline)
+- deploy_gate_train_coverage_baseline_split: absent → `validation`. Training-time q90 coverage (deploy gate (a) baseline) is computed on the held-out VAL split with the best-by-val-total weights via new `evaluate_q90_coverage` in `src/predictor/training.py` (reuses `deploy_gates.q90_coverage` + `rollout.enforce_geometry` for an identical computation to deploy's locked-test path).
+- predictor_checkpoint_save_format: added `train_q90_coverage` to the embedded wrapped dict (now `{state_dict, lookback, constants_sha256, trained_through_ts_utc, train_q90_coverage}`).
+- `scripts/deploy_predictor.py`: `--train-coverage` and `--trained-through` are now optional — they default to the values embedded in the checkpoint (CLI overrides). Added an architecture-mismatch guard: `--lookback` must equal the embedded lookback or deploy STOPs. `scripts/train_predictor.py` computes + embeds the val-split coverage after a successful real-data run.
+- Reason: user-approved follow-up to the checkpoint-persistence change — removes hand-entered gate inputs (`--train-coverage`/`--trained-through`) as an error source now that the checkpoint carries provenance. Verified end-to-end: `deploy_predictor.py` ran for the first time on synthetic fixtures, reading coverage/timestamp from the checkpoint (gates correctly fail on a random model; lookback guard fires). 85 tests green, mypy clean. The VAL split (vs in-sample train) was chosen so gate (a) compares held-out coverage to held-out coverage.
+- Source: conversation 2026-06-29 (decision question answered: validation split)
+
+## 2026-06-29 — Wire train→deploy checkpoint persistence (3 decisions)
+- predictor_checkpoint_dir_and_naming: absent → weights `checkpoints/{run_tag}.pt` + scaler `checkpoints/{run_tag}.scaler.pkl` (run_tag-based; run-history-preserving; binds weights↔scaler↔constants by hash). Added `PredictorConfig.CHECKPOINT_DIR` / `CHECKPOINT_WEIGHTS_SUFFIX` / `CHECKPOINT_SCALER_SUFFIX` to `constants.py`.
+- predictor_checkpoint_save_format: absent → wrapped dict `{state_dict (CPU), lookback, constants_sha256, trained_through_ts_utc}` via `torch.save` (loads under `weights_only=True`) + pickled scaler; matches what `deploy_predictor.py` already reads.
+- predictor_checkpoint_save_policy: absent → best-by-`val_total`. `train_one_fold` now retains the lowest-`val_total` weights and restores them into the model before returning; `scripts/train_predictor.py` saves the checkpoint after a successful run (`--no-save` opts out).
+- Reason: Phase 1 had modules complete but the train→deploy persistence layer was unbuilt (`train_predictor.py` never saved weights; `deploy_predictor.py` required `--checkpoint/--scaler`). Three save conventions were unspecced; user chose run_tag-based naming, wrapped-dict format, and best-by-val-total policy. Added `save_checkpoint` to `src/predictor/training.py` (tests-first: `test_save_checkpoint_round_trips`, `test_train_one_fold_restores_best_val_weights`). 84 tests green, mypy clean; synthetic smoke produces a checkpoint that loads under deploy's `weights_only=True` path.
+- Post-review fixes (same change set): (1) decisions-auditor — `scripts/deploy_predictor.py` manifest default now uses `PREDICTOR.CHECKPOINT_DIR` instead of a bare `"checkpoints"` literal (single-source rule); (2) python-reviewer — `scripts/train_predictor.py --synthetic` now skips the checkpoint save (a synthetic run's fabricated 2020-origin timestamps + random-data weights are never deployable); (3) documented the pickle/Python-version coupling caveat for the scaler artifact in `predictor_checkpoint_save_format`.
+- Source: conversation 2026-06-29 (decision questions answered)
+
 ## 2026-06-29 — Fix stale BTCUSD references after pair switch
 - training_ui_data_gate: `data/raw/BTCUSD_1.csv` → `data/raw/XBTUSD_1.csv` (i.e. `DATA.KRAKEN_HISTORY_CSV_NAME`)
 - Reason: decisions-auditor flagged internal inconsistency — kraken_training_pair was updated to XBTUSD but training_ui_data_gate still referenced BTCUSD_1.csv. Also updated training-dashboard.md and CLAUDE.md repo-state to match.

@@ -209,3 +209,7 @@ __marimo__/
 # Local data — manually placed (BTCUSD_1.csv drag-and-drop), not versioned.
 # Multi-GB raw CSV; locked test set; cache.
 /data/
+
+# Training/deploy artifacts — generated weights, scaler, manifest, agent_config.
+# Backed up to OneDrive/Google Drive (see DECISIONS.md "backups"), not versioned.
+/checkpoints/

@@ -15,6 +15,8 @@ Committed before src/predictor/training.py, per the test-first discipline.
 """
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 import pytest
 
@@ -208,3 +210,104 @@ def test_train_one_fold_raises_on_nonfinite_val(monkeypatch: pytest.MonkeyPatch)
     )
     with pytest.raises(ValueError, match="non-finite validation loss"):
         train_one_fold(model, scaler, train_loader, val_loader, device="cpu", max_epochs=1)
+
+
+def test_train_one_fold_restores_best_val_weights(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Save policy = best-by-val-total: after training, the model holds the weights from
+    the epoch with the lowest val_total, NOT the last epoch's weights."""
+    torch = pytest.importorskip("torch")
+    import src.predictor.training as training_mod
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, train_one_fold
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=16
+    )
+    model = PatchTST(lookback=_LOOKBACK)
+
+    # Scripted val_total: epoch 1 is best (1.0), epochs 2-3 strictly worse. Patience (10)
+    # is far higher than 2, so all three epochs run and "last" != "best".
+    scripted = iter([(0.1, 0.1, 1.0), (0.1, 0.1, 2.0), (0.1, 0.1, 3.0)])
+    snapshots: list[dict[str, object]] = []
+
+    def fake_eval(
+        m: torch.nn.Module, loader: object, device: object, use_amp: object
+    ) -> tuple[float, float, float]:
+        snapshots.append(copy.deepcopy(m.state_dict()))
+        return next(scripted)
+
+    monkeypatch.setattr(training_mod, "_evaluate", fake_eval)
+    train_one_fold(model, scaler, train_loader, val_loader, device="cpu", max_epochs=3)
+
+    final = model.state_dict()
+    best = snapshots[0]  # epoch-1 weights = lowest val_total
+    last = snapshots[-1]  # epoch-3 weights
+    assert all(torch.equal(final[k], best[k]) for k in final)  # restored to best
+    assert any(not torch.equal(final[k], last[k]) for k in final)  # not the last epoch
+
+
+def test_save_checkpoint_round_trips(tmp_path: object) -> None:
+    """save_checkpoint writes run_tag-based weights (.pt) + scaler (.scaler.pkl) in the
+    exact format deploy_predictor.py reads: weights load under weights_only=True with a
+    "state_dict" key + provenance metadata; the scaler unpickles to equal fold stats."""
+    import pickle
+    from pathlib import Path
+
+    torch = pytest.importorskip("torch")
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, save_checkpoint
+
+    out_dir = Path(str(tmp_path))
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    scaler, _, _ = build_fold_loaders(feats, ts, fold, lookback=_LOOKBACK, batch_size=16)
+    model = PatchTST(lookback=_LOOKBACK)
+
+    weights_path, scaler_path = save_checkpoint(
+        model,
+        scaler,
+        out_dir,
+        "deadbeef-saaaaaaaa-cbbbbbbbb-fold0",
+        lookback=_LOOKBACK,
+        constants_sha256="cafef00d",
+        trained_through_ts_utc="2020-01-01T00:00:00Z",
+        train_q90_coverage=0.83,
+    )
+
+    assert weights_path == out_dir / "deadbeef-saaaaaaaa-cbbbbbbbb-fold0.pt"
+    assert scaler_path == out_dir / "deadbeef-saaaaaaaa-cbbbbbbbb-fold0.scaler.pkl"
+
+    # weights_only=True is what deploy_predictor.py uses; the wrapper must survive it.
+    loaded = torch.load(weights_path, map_location="cpu", weights_only=True)
+    assert loaded["lookback"] == _LOOKBACK
+    assert loaded["constants_sha256"] == "cafef00d"
+    assert loaded["trained_through_ts_utc"] == "2020-01-01T00:00:00Z"
+    assert loaded["train_q90_coverage"] == 0.83  # deploy gate (a) baseline, embedded
+    PatchTST(lookback=_LOOKBACK).load_state_dict(loaded["state_dict"])  # state_dict is loadable
+
+    with open(scaler_path, "rb") as fh:
+        restored = pickle.load(fh)
+    assert np.array_equal(restored.data_min_, scaler.data_min_)
+    assert np.array_equal(restored.data_max_, scaler.data_max_)
+
+
+def test_evaluate_q90_coverage_finite_in_range() -> None:
+    """The training-time q90 coverage baseline (embedded in the checkpoint, computed on
+    the VAL split) is a finite fraction in [0, 1], computed via deploy_gates.q90_coverage."""
+    pytest.importorskip("torch")
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, evaluate_q90_coverage
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    _, _, val_loader = build_fold_loaders(feats, ts, fold, lookback=_LOOKBACK, batch_size=16)
+    model = PatchTST(lookback=_LOOKBACK)
+
+    coverage = evaluate_q90_coverage(model, val_loader, device="cpu")
+    assert np.isfinite(coverage)
+    assert 0.0 <= coverage <= 1.0

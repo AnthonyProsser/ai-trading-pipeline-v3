@@ -113,6 +113,15 @@ class PredictorConfig:
     SMOKE_BATCH_SIZE_FALLBACK: int = 16  # Azure A100 decision point if this still OOMs
     WANDB_PROJECT: str = "btc-bot-v3-predictor"
 
+    # Checkpoint persistence (train -> deploy handoff). Filenames are run_tag-based
+    # ({git_sha}-s{scaler8}-c{constants8}-fold{id}) so runs keep history and bind
+    # weights<->scaler<->constants by hash. Weights are a wrapped dict (state_dict +
+    # provenance) loadable under torch weights_only=True; the scaler is pickled.
+    # deploy_predictor.py reads both back from this dir. See DECISIONS.md §Predictor.
+    CHECKPOINT_DIR: str = "checkpoints"
+    CHECKPOINT_WEIGHTS_SUFFIX: str = ".pt"
+    CHECKPOINT_SCALER_SUFFIX: str = ".scaler.pkl"
+
     # Bug regression tests (must be exposed for tests to assert against)
     EARLY_STOPPING_PATIENCE: int = 10
     VARIANCE_FLOOR_FIRST_N_STEPS: int = 100  # assert loss > 0 across these
