@@ -14,8 +14,11 @@ constants.py.
 """
 from __future__ import annotations
 
+import copy
 import math
+import pickle
 from collections.abc import Callable
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
@@ -26,8 +29,10 @@ from torch.utils.data import DataLoader, Dataset
 from constants import PREDICTOR
 from src.data.scaler import PerFoldMinMaxScaler
 from src.data.walk_forward import Fold
+from src.predictor.deploy_gates import q90_coverage
 from src.predictor.early_stopping import EarlyStopper
 from src.predictor.loss import predictor_loss
+from src.predictor.rollout import enforce_geometry
 
 LogFn = Callable[[dict[str, object]], None]
 Loaders = tuple[
@@ -190,6 +195,11 @@ def train_one_fold(
     stopped = False
     train_pin = train_dir = train_tot = math.nan
     val_pin = val_dir = val_tot = math.nan
+    # Save policy = best-by-val-total: retain the lowest-val-loss weights so the saved
+    # checkpoint is the best epoch, not the last (early stopping leaves ~patience epochs
+    # of drift past the minimum). DECISIONS.md §Predictor predictor_checkpoint_save_policy.
+    best_val = math.inf
+    best_state: dict[str, torch.Tensor] | None = None
 
     for epoch in range(max_epochs):
         epochs_run = epoch + 1
@@ -243,6 +253,9 @@ def train_one_fold(
         val_pin, val_dir, val_tot = _evaluate(model, val_loader, dev, use_amp)
         if not math.isfinite(val_tot):
             raise ValueError(f"non-finite validation loss at epoch {epochs_run}: total={val_tot}")
+        if val_tot < best_val:
+            best_val = val_tot
+            best_state = copy.deepcopy(model.state_dict())
         if log is not None:
             log(
                 {
@@ -259,11 +272,84 @@ def train_one_fold(
         if max_steps is not None and step >= max_steps:
             break
 
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
     return FoldMetrics(
         train_pin, train_dir, train_tot, val_pin, val_dir, val_tot, step, epochs_run, stopped
     )
 
 
+def evaluate_q90_coverage(
+    model: torch.nn.Module,
+    loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
+    *,
+    device: str = "cpu",
+) -> float:
+    """Empirical q90 coverage over `loader`, computed exactly as the deploy gate does
+    (geometry-enforced predictions, Close dim via `deploy_gates.q90_coverage`).
+
+    Used to capture the training-time baseline for deploy gate (a) on the held-out VAL
+    split, using the best-by-val-total weights. Embedding this number in the checkpoint
+    lets `deploy_predictor.py` read it instead of taking a hand-typed `--train-coverage`.
+
+    Side-effect: moves `model` to `device` in-place (same convention as train_one_fold).
+    Callers pass the device the model already trains on, so this is a no-op in practice.
+    """
+    dev = torch.device(device)
+    model.to(dev)
+    model.eval()
+    preds: list[torch.Tensor] = []
+    targets: list[torch.Tensor] = []
+    with torch.no_grad():
+        for x, y in loader:
+            # preds -> CPU to match the raw targets (y stays on CPU); q90_coverage compares there.
+            preds.append(enforce_geometry(model(x.to(dev))).cpu())
+            targets.append(y)
+    if not preds:
+        raise RuntimeError("loader yielded no batches — cannot compute q90 coverage")
+    return q90_coverage(torch.cat(preds), torch.cat(targets))
+
+
 def make_run_tag(*, git_sha: str, constants_sha: str, scaler_sha: str, fold_id: int) -> str:
     """W&B run tag = git SHA + scaler hash + constants.py hash + fold id (spec order)."""
     return f"{git_sha}-s{scaler_sha[:8]}-c{constants_sha[:8]}-fold{fold_id}"
+
+
+def save_checkpoint(
+    model: torch.nn.Module,
+    scaler: PerFoldMinMaxScaler,
+    out_dir: Path,
+    run_tag: str,
+    *,
+    lookback: int,
+    constants_sha256: str,
+    trained_through_ts_utc: str,
+    train_q90_coverage: float,
+) -> tuple[Path, Path]:
+    """Persist trained weights + fitted scaler under run_tag-based filenames.
+
+    Weights are a wrapped dict — the CPU state_dict plus provenance (lookback, the
+    constants.py hash, the ISO8601-UTC timestamp the model was trained through, and the
+    training-time q90 coverage baseline for deploy gate (a)) — saved via torch.save so it
+    loads cleanly under deploy_predictor.py's weights_only=True. The scaler is pickled
+    (deploy reads it with pickle.load). The SHA256 manifest over both files +
+    constants.py is built later by deploy_predictor. Returns (weights_path, scaler_path).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    weights_path = out_dir / f"{run_tag}{PREDICTOR.CHECKPOINT_WEIGHTS_SUFFIX}"
+    scaler_path = out_dir / f"{run_tag}{PREDICTOR.CHECKPOINT_SCALER_SUFFIX}"
+    cpu_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
+    torch.save(
+        {
+            "state_dict": cpu_state,
+            "lookback": lookback,
+            "constants_sha256": constants_sha256,
+            "trained_through_ts_utc": trained_through_ts_utc,
+            "train_q90_coverage": train_q90_coverage,
+        },
+        weights_path,
+    )
+    with open(scaler_path, "wb") as fh:
+        pickle.dump(scaler, fh)
+    return weights_path, scaler_path

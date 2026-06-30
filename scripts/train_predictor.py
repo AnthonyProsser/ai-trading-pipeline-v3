@@ -44,7 +44,14 @@ from src.data.scaler import PerFoldMinMaxScaler
 from src.data.validator import validate_candles
 from src.data.walk_forward import Fold, carve_locked_test, make_folds
 from src.predictor.model import PatchTST
-from src.predictor.training import LogFn, build_fold_loaders, make_run_tag, train_one_fold
+from src.predictor.training import (
+    LogFn,
+    build_fold_loaders,
+    evaluate_q90_coverage,
+    make_run_tag,
+    save_checkpoint,
+    train_one_fold,
+)
 
 CandleArrays = tuple[npt.NDArray[np.datetime64], npt.NDArray[np.float64]]
 
@@ -200,6 +207,32 @@ def run(args: argparse.Namespace) -> int:
                 f"val_total={metrics.val_total:.6f} (pinball/direction logged separately)"
             )
             print("[smoke] PASSED — finite loss, no OOM/NaN" if args.smoke else "[train] complete")
+            if args.synthetic:
+                # Synthetic candles carry a fabricated 2020-origin timeline, so a saved
+                # checkpoint's trained_through_ts_utc would be a plausible-but-fake date
+                # and the weights are a random-data model — never deployable. Skip the
+                # save (the save FORMAT is covered by test_save_checkpoint_round_trips).
+                print("[skip] --synthetic: checkpoint not saved (not deployable)")
+            elif not args.no_save:
+                # The model now holds the best-by-val-total weights (restored inside
+                # train_one_fold). trained_through = last TRAIN candle, ISO8601 UTC.
+                trained_through = str(
+                    np.datetime_as_string(
+                        feature_ts[fold.train_end - 1].astype("datetime64[s]"), unit="s"
+                    )
+                ) + "Z"
+                # Training-time q90 coverage = deploy gate (a) baseline, measured on the
+                # held-out VAL split with the best weights (same computation deploy runs
+                # on the locked test set). Embedded so deploy reads it, not a CLI arg.
+                train_coverage = evaluate_q90_coverage(model, val_loader, device=device)
+                print(f"[gate-baseline] val q90 coverage = {train_coverage:.4f}")
+                weights_path, scaler_path = save_checkpoint(
+                    model, scaler, REPO_ROOT / PREDICTOR.CHECKPOINT_DIR, run_tag,
+                    lookback=args.lookback, constants_sha256=constants_hash,
+                    trained_through_ts_utc=trained_through, train_q90_coverage=train_coverage,
+                )
+                print(f"[save] weights -> {weights_path}")
+                print(f"[save] scaler  -> {scaler_path}")
             return 0
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
@@ -226,6 +259,10 @@ def main() -> int:
     )
     ap.add_argument("--lookback", type=int, default=DATA.LOOKBACK)
     ap.add_argument("--fold", type=int, default=0, help="walk-forward fold index (real data)")
+    ap.add_argument(
+        "--no-save", action="store_true", dest="no_save",
+        help="skip writing the checkpoint (pure plumbing smoke; no disk artifacts)",
+    )
     return run(ap.parse_args())
 
 

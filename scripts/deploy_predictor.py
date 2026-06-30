@@ -131,13 +131,54 @@ def write_agent_config(
     config_path.write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _from_cli_or_checkpoint(cli_value: object, embedded: object, flag: str) -> object:
+    """Resolve a deploy parameter: an explicit CLI flag wins, else the value embedded by
+    save_checkpoint, else STOP (refuse to guess gate inputs)."""
+    value = cli_value if cli_value is not None else embedded
+    if value is None:
+        raise SystemExit(
+            f"[stop] --{flag} not provided and not embedded in the checkpoint; cannot proceed."
+        )
+    return value
+
+
 def run(args: argparse.Namespace) -> int:
-    model = PatchTST(lookback=args.lookback)
     # weights_only=True avoids arbitrary-code execution from a crafted .pt. Accept either a
-    # bare state_dict or a wrapper {"state_dict": ...}; the save convention is pinned once
-    # the training run gains checkpointing.
+    # bare state_dict or the wrapper {"state_dict": ..., <provenance>} written by
+    # save_checkpoint; provenance (lookback, train-coverage, trained-through) is read here.
     loaded = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
-    state = loaded["state_dict"] if isinstance(loaded, dict) and "state_dict" in loaded else loaded
+    meta: dict[str, object] = loaded if isinstance(loaded, dict) else {}
+    state = meta.get("state_dict", loaded)
+    if not isinstance(state, dict):
+        raise SystemExit("[stop] checkpoint has no usable state_dict; corrupt or wrong file.")
+
+    embedded_lookback = meta.get("lookback")
+    if embedded_lookback is not None:
+        if not isinstance(embedded_lookback, int):
+            raise SystemExit(f"[stop] checkpoint lookback is not an int: {embedded_lookback!r}")
+        if embedded_lookback != args.lookback:
+            raise SystemExit(
+                f"[stop] --lookback {args.lookback} != checkpoint lookback {embedded_lookback}; "
+                f"refusing (architecture mismatch)."
+            )
+    cov = _from_cli_or_checkpoint(
+        args.train_coverage, meta.get("train_q90_coverage"), "train-coverage"
+    )
+    tt = _from_cli_or_checkpoint(
+        args.trained_through, meta.get("trained_through_ts_utc"), "trained-through"
+    )
+    if not isinstance(cov, (int, float)):
+        raise SystemExit(f"[stop] checkpoint train_q90_coverage is not numeric: {cov!r}")
+    if not isinstance(tt, str):
+        raise SystemExit(f"[stop] checkpoint trained_through_ts_utc is not a string: {tt!r}")
+    train_coverage = float(cov)
+    trained_through = tt
+    print(
+        f"[provenance] lookback={args.lookback} train_coverage={train_coverage:.4f} "
+        f"trained_through={trained_through}"
+    )
+
+    model = PatchTST(lookback=args.lookback)
     model.load_state_dict(state)
     with open(args.scaler, "rb") as fh:
         scaler: PerFoldMinMaxScaler = pickle.load(fh)
@@ -149,7 +190,7 @@ def run(args: argparse.Namespace) -> int:
         model, scaler, features, lookback=args.lookback, batch_size=PREDICTOR.SMOKE_BATCH_SIZE
     )
 
-    result = evaluate_deploy_gates(pred, target, train_time_q90_coverage=args.train_coverage)
+    result = evaluate_deploy_gates(pred, target, train_time_q90_coverage=train_coverage)
     print(
         f"[gates] coverage={result.q90_coverage:.4f} (delta {result.coverage_delta:+.4f}) "
         f"DA={result.directional_accuracy:.4f} calibration={result.calibration_rate:.4f}"
@@ -174,7 +215,7 @@ def run(args: argparse.Namespace) -> int:
         manifest=manifest,
         contract_version=contract_version,
         lookback=args.lookback,
-        trained_through_ts_utc=args.trained_through,
+        trained_through_ts_utc=trained_through,
         result=result,
     )
     print(f"[deploy] gates passed — manifest -> {args.manifest}, agent_config -> {args.config}")
@@ -190,16 +231,20 @@ def main() -> int:
         help="locked-test candle CSV for gate evaluation",
     )
     ap.add_argument(
-        "--train-coverage", type=float, required=True, dest="train_coverage",
-        help="training-time q90 coverage (gate (a) baseline)",
+        "--train-coverage", type=float, default=None, dest="train_coverage",
+        help="training-time q90 coverage (gate (a) baseline); "
+        "defaults to the value embedded in the checkpoint",
     )
     ap.add_argument(
-        "--trained-through", required=True, dest="trained_through",
-        help="ISO8601 UTC timestamp the checkpoint was trained through",
+        "--trained-through", default=None, dest="trained_through",
+        help="ISO8601 UTC timestamp the checkpoint was trained through; "
+        "defaults to the value embedded in the checkpoint",
     )
     ap.add_argument("--lookback", type=int, default=DATA.LOOKBACK)
     ap.add_argument("--config", type=Path, default=REPO_ROOT / "agent_config.json")
-    ap.add_argument("--manifest", type=Path, default=REPO_ROOT / "checkpoints" / "manifest.json")
+    ap.add_argument(
+        "--manifest", type=Path, default=REPO_ROOT / PREDICTOR.CHECKPOINT_DIR / "manifest.json"
+    )
     return run(ap.parse_args())
 
 
