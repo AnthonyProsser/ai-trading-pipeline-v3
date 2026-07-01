@@ -9,7 +9,7 @@ Per fold:
 - Test: 10,000 candles
 - Stride: **50,000** candles
 
-Stride = validation block size ⇒ each validation slice is **non-overlapping**. This matters for the permutation test (no Bonferroni inflation from overlapping validation sets) and for honest fold-by-fold reporting. Roughly 84 non-overlapping validation folds against the 2018-onward dataset (covers all major regime transitions).
+Stride = validation block size ⇒ each validation slice is **non-overlapping**. This matters for the permutation test (no Bonferroni inflation from overlapping validation sets) and for honest fold-by-fold reporting. 78 non-overlapping validation folds against the 2018-onward dataset (covers all major regime transitions) — see `DECISIONS.md::walk_forward_fold_count` for the derivation against the real XBTUSD candle count.
 
 The earlier 396-fold count came from a stride of ~10k with heavy overlap; rejected for v3.
 
@@ -22,6 +22,10 @@ The earlier 396-fold count came from a stride of ~10k with heavy overlap; reject
 - Only `scripts/holdout_evaluator.py` reads from this directory, and only at gate evaluation time.
 
 The 50,000-candle "3-month holdout" framing in v2 was an arithmetic error (50,000 / 1440 ≈ 35 days). Corrected here.
+
+## Search dev-slice (hyperparameter/architecture search loop)
+
+`src/data/walk_forward.py::carve_search_slice()` carves 28,000 candles (20,000 train / 8,000 val, no test split) from the most recent portion of the pre-`HISTORICAL_START` range for `scripts/search_predictor.py`. Structurally disjoint from every walk-forward fold and the locked test set — those only ever draw from `>= HISTORICAL_START`; the search slice only ever draws from `< HISTORICAL_START`. See `DECISIONS.md::search_dev_slice` and `search_confirm_seeds`.
 
 ## Walk-forward 12×1w gate (pre-paper-trading)
 

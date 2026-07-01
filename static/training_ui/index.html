@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BTC Predictor Training</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <span class="app-title">BTC PREDICTOR</span>
+      <span class="badge">TRAINING</span>
+    </div>
+    <div class="header-center">
+      <span id="status-dot" class="status-dot"></span>
+      <span id="status-text" class="status-text">Connecting…</span>
+    </div>
+    <div class="header-right">
+      <button id="btn-start" class="btn btn-start" hidden><span class="btn-label">▶ Start</span></button>
+      <button id="btn-stop" class="btn btn-stop" hidden><span class="btn-label">■ Stop</span></button>
+      <button id="btn-save" class="btn btn-save" hidden><span class="btn-label">Save checkpoint</span></button>
+    </div>
+  </header>
+
+  <div id="data-gate-banner" class="data-gate-banner" hidden>
+    <span class="warn-icon">⚠</span>
+    <span>Raw data file not found. Set <b>KRAKEN_DATA_PATH</b> to the local sync path of Kraken_OHLCVT.zip and restart the server. Run controls are disabled until it is present.</span>
+  </div>
+
+  <div class="layout">
+    <div class="left-col">
+      <section class="panel">
+        <div class="panel-label">Progress</div>
+        <div class="gauge-row">
+          <span class="gauge-label">FOLD</span>
+          <span id="fold-value" class="gauge-value">0 / 84</span>
+        </div>
+        <div id="fold-segs" class="segs"></div>
+
+        <div class="gauge-row" style="margin-top:16px">
+          <span class="gauge-label">EPOCH</span>
+          <span id="epoch-value" class="gauge-value">0 / 100</span>
+        </div>
+        <div id="epoch-segs" class="segs"></div>
+        <div class="gauge-legend">
+          <span><span class="dot dot-green"></span><span id="best-caption">best epoch</span></span>
+          <span><span class="dot dot-amber"></span>no improvement</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-row-header">
+          <span class="panel-label" style="margin-bottom:0">Patience</span>
+          <span id="patience-value" class="patience-value">0 / 10</span>
+        </div>
+        <div id="patience-track" class="patience-track"><div id="patience-fill" class="patience-fill"></div></div>
+        <div id="patience-hint" class="hint">10 epochs of headroom</div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-label">Time remaining</div>
+        <div class="eta-rows">
+          <div class="eta-row"><span>This epoch</span><span id="eta-epoch">—</span></div>
+          <div class="eta-row"><span>This fold</span><span id="eta-fold">—</span></div>
+          <div class="eta-row eta-total"><span>Whole run</span><span id="eta-total">—</span></div>
+        </div>
+      </section>
+
+      <section id="wandb-panel" class="panel wandb-panel" hidden>
+        <div class="wandb-header"><span>⚡</span><span>W&amp;B Run</span></div>
+        <div id="wandb-run-id" class="wandb-run-id" title=""></div>
+        <a id="wandb-link" class="wandb-link" href="#" target="_blank" rel="noopener">Open in W&amp;B →</a>
+      </section>
+      <section id="wandb-offline" class="panel wandb-offline" hidden>
+        <span class="dot-muted"></span>W&amp;B offline — logs saved locally
+      </section>
+    </div>
+
+    <div class="right-col">
+      <section class="panel chart-panel">
+        <div class="chart-header">
+          <div class="chart-legend">
+            <span class="panel-label" style="margin-bottom:0">Loss</span>
+            <span class="legend-item"><span class="legend-swatch swatch-train"></span>train</span>
+            <span class="legend-item"><span class="legend-swatch swatch-val"></span>val</span>
+          </div>
+          <button id="btn-log-toggle" class="btn-ghost">LINEAR</button>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="loss-chart"></canvas>
+          <div id="hover-tip" class="hover-tip" hidden>
+            <div id="hover-epoch" class="hover-epoch"></div>
+            <div class="hover-train">train <span id="hover-train-val"></span></div>
+            <div class="hover-val">val&nbsp;&nbsp;&nbsp;<span id="hover-val-val"></span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel component-strip">
+        <div class="metric">
+          <span class="metric-label">Pinball</span>
+          <span id="m-pinball" class="metric-value">—</span>
+          <span id="m-pinball-delta" class="metric-delta"></span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Direction</span>
+          <span id="m-direction" class="metric-value">—</span>
+          <span id="m-direction-delta" class="metric-delta"></span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Val total</span>
+          <span id="m-total" class="metric-value">—</span>
+          <span id="m-total-delta" class="metric-delta"></span>
+        </div>
+        <div class="metric-sep"></div>
+        <div class="metric">
+          <span class="metric-label">LR</span>
+          <span id="m-lr" class="metric-value">—</span>
+          <span class="metric-hint">warmup-cosine</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Grad norm</span>
+          <span id="m-grad" class="metric-value">—</span>
+          <span id="m-grad-hint" class="metric-hint">stable</span>
+        </div>
+      </section>
+
+      <section class="panel table-panel">
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Fold</th>
+                <th class="num">Train</th>
+                <th class="num">Val</th>
+                <th class="num">DA</th>
+                <th class="num">Q-cov</th>
+                <th class="num">Duration</th>
+              </tr>
+            </thead>
+            <tbody id="fold-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="alerts" class="alerts"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -29,6 +29,11 @@ class EarlyStopper:
         if self.patience < 1:
             raise ValueError(f"patience must be >= 1, got {self.patience}")
 
+    @property
+    def num_bad(self) -> int:
+        """Consecutive non-improving observations since the last improvement."""
+        return self._num_bad
+
     def step(self, val_loss: float) -> bool:
         """Record a validation loss; return whether training should stop."""
         if val_loss < self._best - self.min_delta:

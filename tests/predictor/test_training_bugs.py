@@ -48,6 +48,21 @@ def test_early_stopping_min_delta_requires_real_improvement() -> None:
     assert stopper.step(0.95) is True  # 0.95 < 1.0 but not by 0.1 -> non-improving -> fires
 
 
+def test_early_stopping_num_bad_property_tracks_bad_streak() -> None:
+    # training-dashboard.md §"H — Patience bar" reads the live bad-streak count to
+    # render the patience gauge; it must be a public, readable counter.
+    stopper = EarlyStopper(patience=3)
+    assert stopper.num_bad == 0
+    stopper.step(1.0)  # improvement from +inf
+    assert stopper.num_bad == 0
+    stopper.step(1.0)  # no improvement
+    assert stopper.num_bad == 1
+    stopper.step(1.0)
+    assert stopper.num_bad == 2
+    stopper.step(0.5)  # improves -> resets
+    assert stopper.num_bad == 0
+
+
 def test_variance_floor_loss_strictly_positive() -> None:
     # Bug #1: output collapsed to a CONSTANT drove NLL negative. The failure mode is a
     # constant prediction, so the test pins that case (a random prediction could be > 0
