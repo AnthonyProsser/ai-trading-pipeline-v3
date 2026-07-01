@@ -84,7 +84,9 @@ def gather_predictions(
     with torch.no_grad():
         for x_batch, y_batch in loader:
             preds.append(enforce_geometry(model(x_batch)))
-            targets.append(y_batch)
+            # Model output = cumulative log-return path (TARGET_SEMANTICS); convert the
+            # raw per-step targets to the same space so the gates compare like with like.
+            targets.append(y_batch.cumsum(dim=1))
     return torch.cat(preds), torch.cat(targets)
 
 
@@ -144,14 +146,26 @@ def _from_cli_or_checkpoint(cli_value: object, embedded: object, flag: str) -> o
 
 
 def run(args: argparse.Namespace) -> int:
-    # weights_only=True avoids arbitrary-code execution from a crafted .pt. Accept either a
-    # bare state_dict or the wrapper {"state_dict": ..., <provenance>} written by
-    # save_checkpoint; provenance (lookback, train-coverage, trained-through) is read here.
+    # weights_only=True avoids arbitrary-code execution from a crafted .pt. Only the
+    # wrapper {"state_dict": ..., <provenance>} written by save_checkpoint is deployable:
+    # provenance (lookback, train-coverage, trained-through, target-semantics) is read
+    # here, and the semantics guard below rejects bare state_dicts by construction.
     loaded = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
     meta: dict[str, object] = loaded if isinstance(loaded, dict) else {}
     state = meta.get("state_dict", loaded)
     if not isinstance(state, dict):
         raise SystemExit("[stop] checkpoint has no usable state_dict; corrupt or wrong file.")
+
+    # Target-semantics guard: a checkpoint trained under a different prediction
+    # convention (e.g. the pre-rework per-step log-return models) must never be gate-
+    # evaluated against cumulative targets — the metrics would be silently meaningless.
+    semantics = meta.get("target_semantics")
+    if semantics != PREDICTOR.TARGET_SEMANTICS:
+        raise SystemExit(
+            f"[stop] checkpoint target_semantics {semantics!r} != expected "
+            f"{PREDICTOR.TARGET_SEMANTICS!r} — trained under an incompatible target "
+            f"convention (or predates the semantics tag); refusing to deploy."
+        )
 
     embedded_lookback = meta.get("lookback")
     if embedded_lookback is not None:

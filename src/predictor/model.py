@@ -1,11 +1,32 @@
-"""PatchTST predictor — encoder-only Transformer with channel-mixing patch embedding
-(predictor-training.md §"Architecture", predictor-contract.md §Input/Output).
+"""PatchTST predictor — encoder-only Transformer with channel-mixing patch embedding,
+RevIN-style instance normalization, and a monotone (non-crossing) quantile head.
 
 A single forward pass maps the lookback window to the full multi-step quantile
 forecast (autoregression is banned):
 
     x : (batch, lookback, NUM_INPUT_FEATURES)
         -> y : (batch, HORIZON, NUM_OUTPUT_DIMS, NUM_QUANTILES)
+
+Output semantics (``PredictorConfig.TARGET_SEMANTICS``): quantiles of the CUMULATIVE
+log-return path from the forecast origin — ``y[:, h]`` forecasts the total (h+1)-step
+move, the quantity the trader actually trades. Quantiles are not additive, so per-step
+quantiles could never provide a calibrated interval for the horizon move; predicting
+the cumulative path models it directly.
+
+Three structural choices beyond the plain PatchTST encoder:
+
+1. RevIN input normalization: each window is standardised per feature over the
+   lookback dim with a learnable affine. This is invariant to the per-fold MinMax
+   scaler's fixed affine (so the data pipeline is untouched) and adapts the encoder's
+   input distribution to the current volatility regime instead of to fold-global
+   min/max outliers.
+2. Volatility-conditioned output scale: predicted quantiles are multiplied by the
+   window's own per-feature sigma, so interval width tracks current volatility by
+   construction — the head only has to learn regime-relative shape.
+3. Monotone quantile head: the median is predicted directly and the outer quantiles
+   are offset from it by softplus increments, so q10 <= q50 <= q90 holds for every
+   output coordinate of any input. Crossing quantiles are impossible, not merely
+   discouraged by the pinball loss.
 
 `lookback` must be divisible by ``PATCH_SIZE``; it is split into
 ``lookback / PATCH_SIZE`` non-overlapping patches. In ``channel_mixing`` mode each
@@ -18,13 +39,14 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from constants import DATA, PREDICTOR
 
 
 class PatchTST(nn.Module):
     """Channel-mixing PatchTST encoder producing a (HORIZON, NUM_OUTPUT_DIMS,
-    NUM_QUANTILES) quantile tensor per sample in one forward pass."""
+    NUM_QUANTILES) monotone quantile tensor per sample in one forward pass."""
 
     def __init__(self, lookback: int = DATA.LOOKBACK) -> None:
         super().__init__()
@@ -38,12 +60,30 @@ class PatchTST(nn.Module):
                 f"only channel_mixing patch embedding is implemented, not "
                 f"{PREDICTOR.PATCH_EMBED_MODE!r}"
             )
+        if PREDICTOR.NUM_OUTPUT_DIMS != DATA.NUM_INPUT_FEATURES:
+            raise ValueError(
+                "volatility-conditioned output scaling maps each output dim to its "
+                f"input feature 1:1; NUM_OUTPUT_DIMS={PREDICTOR.NUM_OUTPUT_DIMS} != "
+                f"NUM_INPUT_FEATURES={DATA.NUM_INPUT_FEATURES}"
+            )
+        if tuple(sorted(PREDICTOR.QUANTILES)) != PREDICTOR.QUANTILES:
+            raise ValueError(
+                f"QUANTILES must be strictly ascending for the monotone head, got "
+                f"{PREDICTOR.QUANTILES}"
+            )
 
         self.lookback = lookback
         self.num_tokens = lookback // PREDICTOR.PATCH_SIZE
         self.patch_dim = PREDICTOR.PATCH_SIZE * DATA.NUM_INPUT_FEATURES
         n_quantiles = len(PREDICTOR.QUANTILES)
         self.out_per_step = PREDICTOR.NUM_OUTPUT_DIMS * n_quantiles
+        # Median anchor for the monotone head; quantiles above/below it are built from
+        # cumulative softplus offsets.
+        self._anchor = n_quantiles // 2
+
+        # RevIN learnable affine (applied after per-window standardisation).
+        self.revin_weight = nn.Parameter(torch.ones(DATA.NUM_INPUT_FEATURES))
+        self.revin_bias = nn.Parameter(torch.zeros(DATA.NUM_INPUT_FEATURES))
 
         self.patch_embed = nn.Linear(self.patch_dim, PREDICTOR.D_MODEL)
         # Learnable positional embedding, zero-initialised (no bare init literal).
@@ -73,13 +113,39 @@ class PatchTST(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch = x.shape[0]
+        # RevIN: standardise each window per feature. Any fixed affine the fold scaler
+        # applied cancels out here, so the encoder sees the same distribution whether it
+        # is fed raw or MinMax-scaled features.
+        mean = x.mean(dim=1, keepdim=True)  # (batch, 1, feat)
+        sigma = x.std(dim=1, keepdim=True) + PREDICTOR.REVIN_EPS  # (batch, 1, feat)
+        z = (x - mean) / sigma * self.revin_weight + self.revin_bias
+
         # (batch, lookback, feat) -> (batch, num_tokens, patch_size*feat): non-overlapping
         # patches of PATCH_SIZE consecutive timesteps with all features mixed in.
-        patches = x.reshape(batch, self.num_tokens, self.patch_dim)
+        patches = z.reshape(batch, self.num_tokens, self.patch_dim)
         tokens = self.patch_embed(patches) + self.pos_embed
         encoded = self.encoder(tokens)  # (batch, num_tokens, d_model)
         flat = encoded.reshape(batch, self.num_tokens * PREDICTOR.D_MODEL)
-        out: torch.Tensor = self.head(flat)  # (batch, HORIZON * NUM_OUTPUT_DIMS * NUM_QUANTILES)
-        return out.reshape(
+        raw = self.head(flat).reshape(
             batch, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS, len(PREDICTOR.QUANTILES)
         )
+
+        # Monotone quantiles in normalised space: the anchor channel is the median,
+        # channels above/below add/subtract cumulative softplus offsets.
+        levels: list[torch.Tensor | None] = [None] * len(PREDICTOR.QUANTILES)
+        levels[self._anchor] = raw[..., self._anchor]
+        for j in range(self._anchor + 1, len(PREDICTOR.QUANTILES)):
+            prev_up = levels[j - 1]
+            assert prev_up is not None
+            levels[j] = prev_up + F.softplus(raw[..., j])
+        for j in range(self._anchor - 1, -1, -1):
+            prev_down = levels[j + 1]
+            assert prev_down is not None
+            levels[j] = prev_down - F.softplus(raw[..., j])
+        y_norm = torch.stack([level for level in levels if level is not None], dim=-1)
+
+        # Volatility-conditioned output scale: each output dim is rescaled by its input
+        # feature's window sigma, so quantile spread tracks the current regime. The fold
+        # scaler's fixed per-feature factor folds into the learned head weights.
+        scale = sigma.squeeze(1)[:, None, :, None]  # (batch, 1, dims, 1)
+        return y_norm * scale

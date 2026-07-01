@@ -5,12 +5,14 @@ Lives under src/ (not the train script) so it is unit-testable and importable;
 scripts/train_predictor.py is a thin CLI over it, honouring the
 src-never-imports-scripts rule.
 
-Data convention: the model consumes per-fold MinMax-**scaled** inputs but predicts
-**raw** log-returns, because the loss's FEE_THRESHOLD term lives in raw log-return
-units. So WindowDataset pairs a scaled lookback window with a raw horizon target.
-build_fold_loaders fits the scaler on the fold's TRAIN slice only; train_one_fold
-*receives* that scaler and never builds one. All numeric settings come from
-constants.py.
+Data convention: the model consumes per-fold MinMax-**scaled** inputs (and internally
+re-normalises them per window — RevIN) but predicts **raw cumulative** log-returns,
+because the loss's FEE_THRESHOLD term lives in raw log-return units. WindowDataset
+pairs a scaled lookback window with a raw per-step horizon target; predictor_loss and
+the gate-metric collectors convert targets to the cumulative path (the model's output
+space, PredictorConfig.TARGET_SEMANTICS). build_fold_loaders fits the scaler on the
+fold's TRAIN slice only; train_one_fold *receives* that scaler and never builds one.
+All numeric settings come from constants.py.
 """
 from __future__ import annotations
 
@@ -200,18 +202,9 @@ def build_fold_loaders(
     return scaler, train_loader, val_loader
 
 
-def _warmup_cosine(
-    optimizer: torch.optim.Optimizer, total_steps: int
-) -> torch.optim.lr_scheduler.LambdaLR:
-    warmup = max(1, int(PREDICTOR.WARMUP_FRAC * total_steps))
-
-    def lr_lambda(step: int) -> float:
-        if step < warmup:
-            return float(step + 1) / float(warmup)
-        progress = float(step - warmup) / float(max(1, total_steps - warmup))
-        return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+def _set_lr(optimizer: torch.optim.Optimizer, lr: float) -> None:
+    for group in optimizer.param_groups:
+        group["lr"] = lr
 
 
 def _evaluate(
@@ -253,8 +246,12 @@ def train_one_fold(
     on_save_request: Callable[[], None] | None = None,
 ) -> FoldMetrics:
     """Train one fold on the supplied loaders. Receives the (already-fitted) per-fold
-    scaler -- it never builds one. Uses AdamW + warmup-cosine, AMP (bf16) on CUDA,
-    grad clipping, predictor_loss, and EarlyStopper; raises on a non-finite loss.
+    scaler -- it never builds one. Uses AdamW with linear warmup then a constant LR
+    that decays by LR_PLATEAU_FACTOR after LR_PLATEAU_PATIENCE non-improving val
+    epochs (a cosine schedule pinned to the MAX_EPOCHS horizon never annealed before
+    early stopping fired, so real runs trained at near-peak LR throughout). AMP (bf16)
+    on CUDA, grad clipping, predictor_loss, and EarlyStopper; raises on a non-finite
+    loss.
 
     `stop_event`/`save_event` (training-dashboard.md training UI controls) are polled at
     the top of each batch iteration -- a safe boundary between complete optimizer steps,
@@ -275,7 +272,14 @@ def train_one_fold(
         model.parameters(), lr=PREDICTOR.LEARNING_RATE, weight_decay=PREDICTOR.WEIGHT_DECAY
     )
     total_steps = max(1, max_epochs * max(1, len(train_loader)))
-    scheduler = _warmup_cosine(optimizer, total_steps)
+    warmup_steps = max(1, int(PREDICTOR.WARMUP_FRAC * total_steps))
+    # Plateau LR decay state: LR = LEARNING_RATE x warmup ramp x lr_scale, where
+    # lr_scale halves (LR_PLATEAU_FACTOR) after LR_PLATEAU_PATIENCE consecutive
+    # non-improving validation epochs. Managed manually (not a torch scheduler) so the
+    # warmup ramp and the plateau decay compose without scheduler-interaction bugs.
+    lr_scale = 1.0
+    plateau_best = math.inf
+    plateau_bad = 0
     stopper = EarlyStopper(PREDICTOR.EARLY_STOPPING_PATIENCE)
     use_amp = PREDICTOR.USE_AMP and dev.type == "cuda"
     if len(train_loader) == 0:
@@ -332,8 +336,13 @@ def train_one_fold(
             grad_norm_t = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), PREDICTOR.GRAD_CLIP_NORM
             )
+            lr_now = (
+                PREDICTOR.LEARNING_RATE
+                * min(1.0, float(step + 1) / float(warmup_steps))
+                * lr_scale
+            )
+            _set_lr(optimizer, lr_now)
             optimizer.step()
-            scheduler.step()
             step += 1
             ep_pin += comp.pinball.detach()
             ep_dir += comp.direction.detach()
@@ -361,7 +370,7 @@ def train_one_fold(
                         "pinball": float(comp.pinball),
                         "direction": float(comp.direction),
                         "total": batch_tot,
-                        "lr": float(scheduler.get_last_lr()[0]),
+                        "lr": lr_now,
                         "grad_norm": float(grad_norm_t),
                     }
                 )
@@ -388,6 +397,17 @@ def train_one_fold(
         if val_tot < best_val:
             best_val = val_tot
             best_state = copy.deepcopy(model.state_dict())
+        # Plateau LR decay, evaluated on the same val_total the EarlyStopper watches but
+        # with a shorter patience, so the LR gets a chance to un-stick a plateau before
+        # early stopping ends the fold.
+        if val_tot < plateau_best:
+            plateau_best = val_tot
+            plateau_bad = 0
+        else:
+            plateau_bad += 1
+            if plateau_bad >= PREDICTOR.LR_PLATEAU_PATIENCE:
+                lr_scale *= PREDICTOR.LR_PLATEAU_FACTOR
+                plateau_bad = 0
         if log is not None:
             log(
                 {
@@ -426,17 +446,20 @@ def _collect_predictions(
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Run `model` over every batch in `loader` with geometry enforcement, concatenated
-    to CPU. Shared by evaluate_q90_coverage / evaluate_directional_accuracy so both
-    metrics -- and any future gate metric -- read predictions the identical way deploy
-    does (predictor-contract.md geometry enforcement at every inference step)."""
+    to CPU. Targets are converted to the CUMULATIVE log-return path (the model's output
+    space, PredictorConfig.TARGET_SEMANTICS) so gate metrics compare like with like.
+    Shared by evaluate_q90_coverage / evaluate_directional_accuracy so both metrics --
+    and any future gate metric -- read predictions the identical way deploy does
+    (predictor-contract.md geometry enforcement at every inference step)."""
     model.eval()
     preds: list[torch.Tensor] = []
     targets: list[torch.Tensor] = []
     with torch.no_grad():
         for x, y in loader:
-            # preds -> CPU to match the raw targets (y stays on CPU); metrics compare there.
+            # Both sides -> CPU explicitly: the _WindowLoader keeps y device-resident, so
+            # leaving it in place would compare a CPU pred against a CUDA target.
             preds.append(enforce_geometry(model(x.to(device))).cpu())
-            targets.append(y)
+            targets.append(y.cumsum(dim=1).cpu())
     if not preds:
         raise RuntimeError("loader yielded no batches — cannot evaluate predictions")
     return torch.cat(preds), torch.cat(targets)
@@ -513,10 +536,11 @@ def save_checkpoint(
     """Persist trained weights + fitted scaler under run_tag-based filenames.
 
     Weights are a wrapped dict — the CPU state_dict plus provenance (lookback, the
-    constants.py hash, the ISO8601-UTC timestamp the model was trained through, and the
-    training-time q90 coverage baseline for deploy gate (a)) — saved via torch.save so it
-    loads cleanly under deploy_predictor.py's weights_only=True. The scaler is pickled
-    (deploy reads it with pickle.load). The SHA256 manifest over both files +
+    constants.py hash, the ISO8601-UTC timestamp the model was trained through, the
+    training-time q90 coverage baseline for deploy gate (a), and the target-semantics
+    tag deploy uses to refuse convention-mismatched checkpoints) — saved via torch.save
+    so it loads cleanly under deploy_predictor.py's weights_only=True. The scaler is
+    pickled (deploy reads it with pickle.load). The SHA256 manifest over both files +
     constants.py is built later by deploy_predictor. Returns (weights_path, scaler_path).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -530,6 +554,7 @@ def save_checkpoint(
             "constants_sha256": constants_sha256,
             "trained_through_ts_utc": trained_through_ts_utc,
             "train_q90_coverage": train_q90_coverage,
+            "target_semantics": PREDICTOR.TARGET_SEMANTICS,
         },
         weights_path,
     )
