@@ -35,7 +35,7 @@ from constants import DATA, PREDICTOR, TRAINING_UI
 from src.data.feature_pipeline import compute_features
 from src.data.manifest import sha256_file
 from src.data.validator import validate_candles
-from src.data.walk_forward import carve_locked_test, make_folds
+from src.data.walk_forward import carve_locked_test, filter_by_historical_start, make_folds
 from src.predictor.training import train_all_folds
 from src.training_ui.exporter import (
     FoldRecord,
@@ -176,6 +176,7 @@ def _default_run_training(runner: TrainingRunner) -> None:
     validated = validate_candles(timestamps, ohlcv)
     features = compute_features(validated.ohlcv)
     feature_ts = validated.timestamps[1:]
+    feature_ts, features = filter_by_historical_start(feature_ts, features)
     folds = make_folds(carve_locked_test(features.shape[0]))
     lookback = DATA.LOOKBACK
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -197,7 +198,7 @@ def _default_run_training(runner: TrainingRunner) -> None:
 
     train_all_folds(
         features, feature_ts, folds,
-        lookback=lookback, batch_size=PREDICTOR.SMOKE_BATCH_SIZE, device=device,
+        lookback=lookback, batch_size=PREDICTOR.PROD_BATCH_SIZE, device=device,
         max_epochs=PREDICTOR.MAX_EPOCHS, checkpoint_dir=runner.checkpoint_dir,
         git_sha=_git_short_sha(), constants_sha=sha256_file(REPO_ROOT / "constants.py"),
         log=log, stop_event=runner.stop_event, save_event=runner.save_event,

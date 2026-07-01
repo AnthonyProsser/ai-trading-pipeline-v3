@@ -125,6 +125,17 @@ class PredictorConfig:
     SEED: int = 0
     SMOKE_BATCH_SIZE: int = 32  # smoke default; drop to fallback on OOM
     SMOKE_BATCH_SIZE_FALLBACK: int = 16  # Azure A100 decision point if this still OOMs
+    # Production (real walk-forward run) training batch size — distinct from the smoke
+    # value above, which existed only for the 1-epoch/1-fold pre-launch gate. The smoke
+    # value (32) had leaked into the real run via the training UI, leaving the 4060 badly
+    # under-fed. 256 keeps a ~3M-param PatchTST at lookback 1440 well under 8GB (measured
+    # 474 MB peak on the 4060) while cutting fixed per-step overhead vs. 32.
+    # PROD_BATCH_SIZE_FALLBACK (128) is the documented manual OOM step-down; it is NOT yet
+    # auto-wired into an OOM-retry loop in the dashboard run (batch 256 has wide VRAM
+    # headroom, so a retry path is unbuilt for now). DECISIONS.md
+    # 'predictor_prod_batch_size' — user-confirmed 256 on 2026-07-01.
+    PROD_BATCH_SIZE: int = 256
+    PROD_BATCH_SIZE_FALLBACK: int = 128
     WANDB_PROJECT: str = "btc-bot-v3-predictor"
 
     # Checkpoint persistence (train -> deploy handoff). Filenames are run_tag-based
@@ -179,6 +190,14 @@ class TrainingUIConfig:
     LOSS_CHART_EMA_WINDOW: int = 5  # "smoothed with a 5-epoch EMA"
     LOSS_CHART_VISIBLE_EPOCHS: int = 200  # "the last 200 epochs are always visible"
     BATCH_TRACE_MAX_POINTS: int = 40  # cosmetic default: raw batch-loss trace length
+    # Emit a 'batch' SSE message (and take the CUDA sync it entails) only every Nth
+    # optimizer step instead of every step. A per-step sync + JSON broadcast is pure
+    # overhead ~4,642×/epoch and starves the GPU; throttling to every 50th step removes
+    # it from the hot path while a browser 60Hz UI still updates far faster than a human
+    # reads. The 'batch' payload schema is unchanged — only its cadence. The final step
+    # of every epoch is always flushed so the trace ends on the true last value.
+    # DECISIONS.md 'training_ui_batch_log_interval'. Not display-correctness critical.
+    BATCH_LOG_INTERVAL: int = 50
 
     # Alert banners (§"J — Alert banner")
     ALERT_AUTO_DISMISS_SECONDS: float = 8.0

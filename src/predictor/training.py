@@ -20,14 +20,14 @@ import math
 import pickle
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 import numpy.typing as npt
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 
 from constants import PREDICTOR, TRAINING_UI
 from src.data.scaler import PerFoldMinMaxScaler
@@ -38,12 +38,16 @@ from src.predictor.loss import predictor_loss
 from src.predictor.model import PatchTST
 from src.predictor.rollout import enforce_geometry
 
+# TF32 matmuls + cuDNN autotuner: free throughput on Ampere+ (the RTX 4060 is sm_89)
+# with no change to model quality (bf16 AMP already trains in reduced precision, and the
+# fixed-shape training loop lets cuDNN pick its fastest kernels once). Set at import so
+# every entry point (training UI, train_predictor.py) benefits; both are no-ops on CPU.
+torch.set_float32_matmul_precision("high")
+torch.backends.cudnn.benchmark = True
+
 LogFn = Callable[[dict[str, object]], None]
-Loaders = tuple[
-    PerFoldMinMaxScaler,
-    "DataLoader[tuple[torch.Tensor, torch.Tensor]]",
-    "DataLoader[tuple[torch.Tensor, torch.Tensor]]",
-]
+Batch = tuple[torch.Tensor, torch.Tensor]
+Loaders = tuple[PerFoldMinMaxScaler, "_WindowLoader", "_WindowLoader"]
 
 
 class FoldMetrics(NamedTuple):
@@ -93,6 +97,69 @@ def _to_f32(array: npt.NDArray[np.float64]) -> torch.Tensor:
     return torch.from_numpy(np.ascontiguousarray(array, dtype=np.float32))
 
 
+class _WindowLoader:
+    """Device-resident batched sliding-window iterator — a drop-in replacement for a
+    DataLoader over WindowDataset that eliminates the per-step host->device copy and
+    Python-side per-sample slicing that dominated the old hot loop.
+
+    The fold's scaled inputs and raw targets are tiny (~3 MB for a 200k-candle fold), so
+    both tensors live on the training device up front. Each batch is formed by a single
+    vectorised gather over precomputed window offsets — no DataLoader workers, no
+    pin_memory, no blocking `.to(device)` per step. Windowing semantics are identical to
+    WindowDataset: input = scaled `[i : i+lookback]`, target = raw
+    `[i+lookback : i+lookback+horizon]`, `n = rows - lookback - horizon + 1` windows.
+    `shuffle`/`drop_last` mirror the DataLoader flags the two splits used before.
+
+    `.dataset` exposes the underlying WindowDataset purely so callers/tests can read the
+    window count via `len(loader.dataset)` exactly as with a real DataLoader.
+    """
+
+    def __init__(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        *,
+        lookback: int,
+        horizon: int,
+        batch_size: int,
+        shuffle: bool,
+        drop_last: bool,
+        device: torch.device,
+    ) -> None:
+        self.dataset = WindowDataset(x, y, lookback, horizon)  # validates + carries len
+        self._x = x.to(device)
+        self._y = y.to(device)
+        self._lookback = lookback
+        self._horizon = horizon
+        self._batch_size = batch_size
+        self._shuffle = shuffle
+        self._drop_last = drop_last
+        self._device = device
+        self._n = len(self.dataset)
+        # Precomputed within-window offsets, reused every batch (never re-materialised).
+        self._look_off = torch.arange(lookback, device=device)
+        self._hor_off = torch.arange(horizon, device=device)
+
+    def __len__(self) -> int:
+        if self._drop_last:
+            return self._n // self._batch_size
+        return (self._n + self._batch_size - 1) // self._batch_size
+
+    def __iter__(self) -> Iterator[Batch]:
+        if self._shuffle:
+            order = torch.randperm(self._n, device=self._device)
+        else:
+            order = torch.arange(self._n, device=self._device)
+        bs = self._batch_size
+        limit = (self._n // bs) * bs if self._drop_last else self._n
+        for start in range(0, limit, bs):
+            base = order[start : start + bs]
+            # Vectorised gather: (batch, lookback/horizon) index grids into the fold tensor.
+            x_idx = base[:, None] + self._look_off[None, :]
+            y_idx = base[:, None] + (self._lookback + self._hor_off)[None, :]
+            yield self._x[x_idx], self._y[y_idx]
+
+
 def build_fold_loaders(
     features: npt.NDArray[np.float64],
     timestamps: npt.NDArray[np.datetime64],
@@ -100,12 +167,18 @@ def build_fold_loaders(
     *,
     lookback: int,
     batch_size: int,
+    device: str = "cpu",
 ) -> Loaders:
     """Fit a per-fold scaler on TRAIN, return (scaler, train_loader, val_loader).
 
     Inputs are scaled; targets stay raw. The scaler's fold window is [train_start,
     val_end), so its own assertion rejects any transform that strays outside the fold.
+    Loaders are device-resident (`_WindowLoader`): the whole fold's tensors are moved to
+    `device` once and batched by vectorised gather, so the training loop never pays a
+    per-step host->device copy. `device` defaults to "cpu"; callers that train on CUDA
+    pass "cuda" so the fold lives GPU-resident.
     """
+    dev = torch.device(device)
     ts_m = timestamps.astype("datetime64[m]")
     scaler = PerFoldMinMaxScaler(fold_start=ts_m[fold.train_start], fold_end=ts_m[fold.val_end - 1])
     train_feats = features[fold.train_start : fold.train_end]
@@ -114,13 +187,15 @@ def build_fold_loaders(
     x_train = scaler.transform(train_feats, timestamps[fold.train_start : fold.train_end])
     x_val = scaler.transform(val_feats, timestamps[fold.val_start : fold.val_end])
 
-    train_ds = WindowDataset(_to_f32(x_train), _to_f32(train_feats), lookback, PREDICTOR.HORIZON)
-    val_ds = WindowDataset(_to_f32(x_val), _to_f32(val_feats), lookback, PREDICTOR.HORIZON)
-    train_loader: DataLoader[tuple[torch.Tensor, torch.Tensor]] = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, drop_last=True
+    train_loader = _WindowLoader(
+        _to_f32(x_train), _to_f32(train_feats),
+        lookback=lookback, horizon=PREDICTOR.HORIZON, batch_size=batch_size,
+        shuffle=True, drop_last=True, device=dev,
     )
-    val_loader: DataLoader[tuple[torch.Tensor, torch.Tensor]] = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False, drop_last=False
+    val_loader = _WindowLoader(
+        _to_f32(x_val), _to_f32(val_feats),
+        lookback=lookback, horizon=PREDICTOR.HORIZON, batch_size=batch_size,
+        shuffle=False, drop_last=False, device=dev,
     )
     return scaler, train_loader, val_loader
 
@@ -141,7 +216,7 @@ def _warmup_cosine(
 
 def _evaluate(
     model: torch.nn.Module,
-    loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
+    loader: _WindowLoader,
     device: torch.device,
     use_amp: bool,
 ) -> tuple[float, float, float]:
@@ -165,8 +240,8 @@ def _evaluate(
 def train_one_fold(
     model: torch.nn.Module,
     scaler: PerFoldMinMaxScaler,
-    train_loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
-    val_loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
+    train_loader: _WindowLoader,
+    val_loader: _WindowLoader,
     *,
     device: str = "cpu",
     max_epochs: int = PREDICTOR.MAX_EPOCHS,
@@ -218,12 +293,24 @@ def train_one_fold(
     best_val = math.inf
     best_state: dict[str, torch.Tensor] | None = None
 
+    # SSE 'batch' cadence: emitting a payload forces a CUDA sync (to read the loss
+    # components as floats) plus a JSON broadcast; doing that every step starves the GPU
+    # and dominated the old hot loop. Throttle to every LOG_INTERVAL-th step (schema
+    # unchanged), always flushing the last step of the epoch so the trace ends on the
+    # true value. DECISIONS.md 'training_ui_batch_log_interval'.
+    log_interval = TRAINING_UI.BATCH_LOG_INTERVAL
+
     for epoch in range(max_epochs):
         epochs_run = epoch + 1
         model.train()
-        ep_pin = ep_dir = ep_tot = 0.0
+        # On-GPU epoch accumulators: kept as device tensors so no per-step .item()/sync
+        # is needed; converted to Python floats once at epoch end.
+        ep_pin = torch.zeros((), device=dev)
+        ep_dir = torch.zeros((), device=dev)
+        ep_tot = torch.zeros((), device=dev)
         ep_batches = 0
-        for x, y in train_loader:
+        n_batches = len(train_loader)
+        for batch_idx, (x, y) in enumerate(train_loader):
             if stop_event is not None and stop_event.is_set():
                 stopped_by_user = True
                 break
@@ -231,46 +318,53 @@ def train_one_fold(
                 if on_save_request is not None:
                     on_save_request()
                 save_event.clear()
+            # Defensive no-op when the loader was built for `dev` (the normal case: the
+            # _WindowLoader already yields device-resident tensors). Kept only to stay
+            # correct if a caller passes a loader built for a different device.
             x, y = x.to(dev), y.to(dev)
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=dev.type, dtype=torch.bfloat16, enabled=use_amp):
                 comp = predictor_loss(model(x), y)
-            if not bool(torch.isfinite(comp.total)):
-                raise ValueError(
-                    f"non-finite training loss at step {step}: total={float(comp.total)}"
-                )
             comp.total.backward()  # type: ignore[no-untyped-call]  # torch stubs untyped
             # clip_grad_norm_ returns the PRE-clip total norm -- exactly the "is clipping
-            # engaging" signal the loss-component strip's grad-norm coloring needs.
-            grad_norm = float(
-                torch.nn.utils.clip_grad_norm_(model.parameters(), PREDICTOR.GRAD_CLIP_NORM)
+            # engaging" signal the loss-component strip's grad-norm coloring needs. Kept as
+            # a tensor; only read as a float when a batch payload is actually emitted.
+            grad_norm_t = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), PREDICTOR.GRAD_CLIP_NORM
             )
             optimizer.step()
             scheduler.step()
             step += 1
-            lr = float(scheduler.get_last_lr()[0])
-            batch_pin, batch_dir, batch_tot = (
-                float(comp.pinball),
-                float(comp.direction),
-                float(comp.total),
-            )
-            ep_pin += batch_pin
-            ep_dir += batch_dir
-            ep_tot += batch_tot
+            ep_pin += comp.pinball.detach()
+            ep_dir += comp.direction.detach()
+            ep_tot += comp.total.detach()
             ep_batches += 1
-            if log is not None:
-                payload: dict[str, object] = {
-                    "split": "train",
-                    "step": step,
-                    "fold": fold_index,
-                    "epoch": epoch,
-                    "pinball": batch_pin,
-                    "direction": batch_dir,
-                    "total": batch_tot,
-                    "lr": lr,
-                    "grad_norm": grad_norm,
-                }
-                log(payload)
+            is_last_batch = (batch_idx == n_batches - 1) or (
+                max_steps is not None and step >= max_steps
+            )
+            # One sync per emitted payload instead of one per step. The step's own
+            # finiteness is verified here (the emitted 'total' is read anyway); a NaN
+            # between emissions still surfaces at the epoch-boundary accumulator check
+            # below, so a non-finite training loss can never pass silently.
+            if log is not None and (step == 1 or step % log_interval == 0 or is_last_batch):
+                batch_tot = float(comp.total)
+                if not math.isfinite(batch_tot):
+                    raise ValueError(
+                        f"non-finite training loss at step {step}: total={batch_tot}"
+                    )
+                log(
+                    {
+                        "split": "train",
+                        "step": step,
+                        "fold": fold_index,
+                        "epoch": epoch,
+                        "pinball": float(comp.pinball),
+                        "direction": float(comp.direction),
+                        "total": batch_tot,
+                        "lr": float(scheduler.get_last_lr()[0]),
+                        "grad_norm": float(grad_norm_t),
+                    }
+                )
             if max_steps is not None and step >= max_steps:
                 break
 
@@ -278,13 +372,15 @@ def train_one_fold(
             break
 
         # Report the epoch-averaged train loss (not the last batch) so it is comparable
-        # with the epoch-averaged val loss from _evaluate.
+        # with the epoch-averaged val loss from _evaluate. Single sync per epoch.
         if ep_batches > 0:
-            train_pin, train_dir, train_tot = (
-                ep_pin / ep_batches,
-                ep_dir / ep_batches,
-                ep_tot / ep_batches,
-            )
+            train_pin = float(ep_pin) / ep_batches
+            train_dir = float(ep_dir) / ep_batches
+            train_tot = float(ep_tot) / ep_batches
+            if not math.isfinite(train_tot):
+                raise ValueError(
+                    f"non-finite training loss in epoch {epochs_run}: mean total={train_tot}"
+                )
 
         val_pin, val_dir, val_tot = _evaluate(model, val_loader, dev, use_amp)
         if not math.isfinite(val_tot):
@@ -326,7 +422,7 @@ def train_one_fold(
 
 def _collect_predictions(
     model: torch.nn.Module,
-    loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
+    loader: _WindowLoader,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Run `model` over every batch in `loader` with geometry enforcement, concatenated
@@ -348,7 +444,7 @@ def _collect_predictions(
 
 def evaluate_q90_coverage(
     model: torch.nn.Module,
-    loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
+    loader: _WindowLoader,
     *,
     device: str = "cpu",
 ) -> float:
@@ -370,7 +466,7 @@ def evaluate_q90_coverage(
 
 def evaluate_directional_accuracy(
     model: torch.nn.Module,
-    loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
+    loader: _WindowLoader,
     *,
     device: str = "cpu",
 ) -> float:
@@ -502,7 +598,7 @@ def train_all_folds(
         fold_start = time.monotonic()
         model = PatchTST(lookback=lookback)
         scaler, train_loader, val_loader = build_fold_loaders(
-            features, timestamps, fold, lookback=lookback, batch_size=batch_size
+            features, timestamps, fold, lookback=lookback, batch_size=batch_size, device=device
         )
         run_tag = make_run_tag(
             git_sha=git_sha, constants_sha=constants_sha,

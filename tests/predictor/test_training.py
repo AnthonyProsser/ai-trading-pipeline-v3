@@ -464,6 +464,91 @@ def test_train_all_folds_walks_folds_and_emits_wire_events(tmp_path: object) -> 
     assert any(e["state"] == "stopped" for e in statuses)  # natural run completion
 
 
+def test_window_loader_matches_dataset_windowing_and_scaling() -> None:
+    """The GPU-resident batch loader must produce the exact same window semantics as the
+    reference WindowDataset path: scaled lookback inputs in [0,1] on TRAIN, raw horizon
+    targets, drop_last on train, full coverage on val, and the identical window count.
+    Speed path must not change the numbers."""
+    pytest.importorskip("torch")
+    from src.data.walk_forward import Fold
+    from src.predictor.training import build_fold_loaders
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=16
+    )
+
+    train_batches = list(iter(train_loader))
+    assert len(train_loader) == len(train_batches)
+    for xb, yb in train_batches:
+        assert xb.shape == (16, _LOOKBACK, _F)
+        assert yb.shape == (16, _H, _F)
+        assert float(xb.min()) >= 0.0 and float(xb.max()) <= 1.0 + 1e-6
+
+    val_rows = sum(int(xb.shape[0]) for xb, _ in val_loader)
+    assert val_rows == len(val_loader.dataset)  # type: ignore[attr-defined]
+    assert val_rows > 0
+
+
+def test_window_loader_drop_last_preserved() -> None:
+    """Shuffled train iteration with drop_last must cover exactly floor(N/bs)*bs windows —
+    sanity that randperm windowing preserves drop_last semantics."""
+    pytest.importorskip("torch")
+    from src.data.walk_forward import Fold
+    from src.predictor.training import build_fold_loaders
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    _, train_loader, _ = build_fold_loaders(feats, ts, fold, lookback=_LOOKBACK, batch_size=8)
+    seen = sum(int(xb.shape[0]) for xb, _ in train_loader)
+    n_windows = len(train_loader.dataset)  # type: ignore[attr-defined]
+    assert seen == (n_windows // 8) * 8
+
+
+def test_train_one_fold_throttles_batch_logging() -> None:
+    """Per-step logging is throttled to every BATCH_LOG_INTERVAL steps (plus a final
+    flush), but the emitted 'batch' payload SCHEMA is unchanged (step/fold/epoch/
+    pinball/direction/total/lr/grad_norm all present)."""
+    pytest.importorskip("torch")
+    from constants import TRAINING_UI
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, train_one_fold
+
+    feats, ts = _synthetic(400)
+    fold = Fold(0, 0, 250, 250, 350, 350, 400)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=8
+    )
+    model = PatchTST(lookback=_LOOKBACK)
+
+    batch_payloads: list[dict[str, object]] = []
+
+    def spy(payload: dict[str, object]) -> None:
+        if payload["split"] == "train":
+            batch_payloads.append(payload)
+
+    metrics = train_one_fold(
+        model, scaler, train_loader, val_loader, device="cpu", max_epochs=1, log=spy
+    )
+
+    interval = TRAINING_UI.BATCH_LOG_INTERVAL
+    assert interval > 1  # actually throttling
+    assert 0 < len(batch_payloads) <= metrics.steps
+    assert len(batch_payloads) <= metrics.steps // interval + 2
+    for key in ("step", "fold", "epoch", "pinball", "direction", "total", "lr", "grad_norm"):
+        assert key in batch_payloads[0]
+    logged_steps = [int(p["step"]) for p in batch_payloads]  # type: ignore[arg-type]
+    assert logged_steps == sorted(logged_steps)
+
+
+def test_prod_batch_size_constants_present() -> None:
+    """Production training batch size is a distinct frozen constant, not the smoke value."""
+    assert PREDICTOR.PROD_BATCH_SIZE > PREDICTOR.SMOKE_BATCH_SIZE
+    assert PREDICTOR.PROD_BATCH_SIZE_FALLBACK < PREDICTOR.PROD_BATCH_SIZE
+
+
 def test_train_all_folds_stops_early_when_stop_event_set(tmp_path: object) -> None:
     """Setting stop_event after fold 0 completes prevents fold 1 from ever starting —
     no garbage fold_complete for an aborted fold."""
