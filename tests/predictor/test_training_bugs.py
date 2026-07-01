@@ -96,3 +96,51 @@ def test_trend_loss_constant_candles_known_baseline() -> None:
     penalty = direction_penalty(pred, target)
     assert penalty.item() == pytest.approx(EXECUTION.FEE_THRESHOLD)
     assert penalty.item() > 0.0
+
+
+def test_direction_penalty_final_horizon_cumulative() -> None:
+    # The penalty reads ONLY the final-horizon cumulative close q50 vs. the cumulative
+    # realised close move: fee is a per-trade round-trip cost, comparable to the whole
+    # horizon move, not to a single 1-minute step. A correct-sign forecast clearing the
+    # fee is penalty-free; the wrong sign pays relu(fee + |q50_cum|).
+    torch = pytest.importorskip("torch")
+    from constants import DATA
+    from src.predictor.loss import direction_penalty
+
+    close = DATA.FEATURE_NAMES.index("close_logret")
+    q50 = PREDICTOR.QUANTILES.index(0.50)
+    fee = EXECUTION.FEE_THRESHOLD
+    pred_shape = (2, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS, len(PREDICTOR.QUANTILES))
+
+    pred = torch.zeros(pred_shape)
+    pred[:, -1, close, q50] = 2 * fee  # cumulative forecast: up, clears the fee
+    target_cum = torch.zeros((2, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS))
+    target_cum[:, -1, close] = 1.0  # realised horizon move: up
+    assert direction_penalty(pred, target_cum).item() == pytest.approx(0.0)
+
+    target_cum[:, -1, close] = -1.0  # realised horizon move: down -> wrong sign
+    assert direction_penalty(pred, target_cum).item() == pytest.approx(3 * fee)
+
+    # Intermediate steps are NOT penalised: a large wrong-sign q50 at step 0 with a
+    # flat final step still floors at the flat-market fee baseline.
+    pred = torch.zeros(pred_shape)
+    pred[:, 0, close, q50] = -10.0
+    target_cum = torch.zeros((2, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS))
+    assert direction_penalty(pred, target_cum).item() == pytest.approx(fee)
+
+
+def test_pinball_is_zero_when_pred_equals_cumulative_target() -> None:
+    # predictor_loss trains against the CUMULATIVE log-return path (quantiles are not
+    # additive, so per-step quantiles cannot give a calibrated interval for the h-step
+    # move). A prediction equal to the cumulative target at every quantile has exactly
+    # zero pinball loss.
+    torch = pytest.importorskip("torch")
+    from src.predictor.loss import predictor_loss
+
+    gen = torch.Generator().manual_seed(1)
+    target = torch.randn((4, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS), generator=gen) * 0.01
+    cum = torch.cumsum(target, dim=1)
+    pred = cum.unsqueeze(-1).expand(-1, -1, -1, len(PREDICTOR.QUANTILES)).contiguous()
+
+    comp = predictor_loss(pred, target)
+    assert comp.pinball.item() == pytest.approx(0.0, abs=1e-9)

@@ -75,3 +75,33 @@ def test_num_tokens_is_lookback_over_patch_size() -> None:
 
     model = PatchTST(lookback=DATA.LOOKBACK)
     assert model.num_tokens == DATA.LOOKBACK // PREDICTOR.PATCH_SIZE
+
+
+def test_quantile_outputs_are_monotone_by_construction() -> None:
+    # The head parameterises quantiles as median +/- cumulative softplus offsets, so
+    # q10 <= q50 <= q90 holds for EVERY output coordinate of any input — crossing
+    # quantiles are impossible by construction, not just discouraged by the loss.
+    torch = pytest.importorskip("torch")
+    from src.predictor.model import PatchTST
+
+    torch.manual_seed(PREDICTOR.SEED)
+    model = PatchTST(lookback=PREDICTOR.PATCH_SIZE * 2).eval()
+    y = model(torch.randn(8, PREDICTOR.PATCH_SIZE * 2, _IN))
+
+    for lo in range(len(PREDICTOR.QUANTILES) - 1):
+        assert bool(torch.all(y[..., lo] <= y[..., lo + 1]))
+
+
+def test_forward_is_shift_invariant_and_volatility_scaled() -> None:
+    # RevIN-style instance normalization: a constant shift of the input window must not
+    # change the forecast, and rescaling the window by k must rescale the predicted
+    # quantiles by ~k (interval width tracks current volatility by construction).
+    torch = pytest.importorskip("torch")
+    from src.predictor.model import PatchTST
+
+    torch.manual_seed(PREDICTOR.SEED)
+    model = PatchTST(lookback=PREDICTOR.PATCH_SIZE * 2).eval()
+    x = torch.randn(4, PREDICTOR.PATCH_SIZE * 2, _IN)
+
+    assert torch.allclose(model(x + 5.0), model(x), atol=1e-4)
+    assert torch.allclose(model(x * 3.0), model(x) * 3.0, rtol=1e-3, atol=1e-5)
