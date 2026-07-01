@@ -311,3 +311,189 @@ def test_evaluate_q90_coverage_finite_in_range() -> None:
     coverage = evaluate_q90_coverage(model, val_loader, device="cpu")
     assert np.isfinite(coverage)
     assert 0.0 <= coverage <= 1.0
+
+
+def test_evaluate_directional_accuracy_finite_or_nan() -> None:
+    """DA is either NaN (nothing tradeable in the fold) or a fraction in [0, 1] — same
+    contract as deploy_gates.directional_accuracy, evaluated over a whole loader."""
+    pytest.importorskip("torch")
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, evaluate_directional_accuracy
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    _, _, val_loader = build_fold_loaders(feats, ts, fold, lookback=_LOOKBACK, batch_size=16)
+    model = PatchTST(lookback=_LOOKBACK)
+
+    da = evaluate_directional_accuracy(model, val_loader, device="cpu")
+    assert np.isnan(da) or (0.0 <= da <= 1.0)
+
+
+def test_train_one_fold_batch_payload_includes_fold_lr_grad_norm() -> None:
+    """training-dashboard.md's SSE 'batch' message needs fold/epoch/lr/grad_norm on every
+    per-batch log call, and the 'epoch' message needs patience + best_val_total."""
+    pytest.importorskip("torch")
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, train_one_fold
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=16
+    )
+    model = PatchTST(lookback=_LOOKBACK)
+
+    batch_payloads: list[dict[str, object]] = []
+    epoch_payloads: list[dict[str, object]] = []
+
+    def spy(payload: dict[str, object]) -> None:
+        (batch_payloads if payload["split"] == "train" else epoch_payloads).append(payload)
+
+    train_one_fold(
+        model, scaler, train_loader, val_loader, device="cpu", max_epochs=1,
+        log=spy, fold_index=5,
+    )
+
+    assert batch_payloads
+    first = batch_payloads[0]
+    assert first["fold"] == 5
+    assert first["epoch"] == 0
+    assert np.isfinite(first["lr"]) and first["lr"] > 0  # type: ignore[arg-type]
+    assert np.isfinite(first["grad_norm"]) and first["grad_norm"] >= 0  # type: ignore[arg-type]
+
+    assert epoch_payloads
+    ep = epoch_payloads[0]
+    assert ep["fold"] == 5
+    assert ep["patience"] == 0  # first epoch always "improves" from +inf
+    assert np.isfinite(ep["best_val_total"])  # type: ignore[arg-type]
+    assert "train_total" in ep and "val_total" in ep
+
+
+def test_train_one_fold_stop_event_halts_and_flags_stopped() -> None:
+    """A pre-set stop_event halts training before any batch runs (checked at the top of
+    the batch loop, before the forward/backward pass) — no torn optimizer step."""
+    pytest.importorskip("torch")
+    import threading
+
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, train_one_fold
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=16
+    )
+    model = PatchTST(lookback=_LOOKBACK)
+
+    stop_event = threading.Event()
+    stop_event.set()
+
+    metrics = train_one_fold(
+        model, scaler, train_loader, val_loader, device="cpu", max_epochs=5,
+        stop_event=stop_event,
+    )
+    assert metrics.stopped_by_user is True
+    assert metrics.steps == 0
+
+
+def test_train_one_fold_save_event_triggers_callback_once_then_clears() -> None:
+    """A set save_event fires on_save_request exactly once at the next safe batch
+    boundary, then clears itself so it doesn't refire every subsequent batch."""
+    pytest.importorskip("torch")
+    import threading
+
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, train_one_fold
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=16
+    )
+    model = PatchTST(lookback=_LOOKBACK)
+
+    save_event = threading.Event()
+    save_event.set()
+    calls = []
+
+    train_one_fold(
+        model, scaler, train_loader, val_loader, device="cpu", max_epochs=1,
+        save_event=save_event, on_save_request=lambda: calls.append(1),
+    )
+    assert calls == [1]
+    assert save_event.is_set() is False
+
+
+def test_train_all_folds_walks_folds_and_emits_wire_events(tmp_path: object) -> None:
+    """train_all_folds walks folds in order, emits batch/epoch/fold_complete events per
+    the SSE schema, and writes a real checkpoint per fold."""
+    pytest.importorskip("torch")
+    from pathlib import Path
+
+    from src.data.walk_forward import Fold
+    from src.predictor.training import train_all_folds
+
+    feats, ts = _synthetic(500)
+    folds = [
+        Fold(0, 0, 150, 150, 250, 250, 300),
+        Fold(1, 150, 300, 300, 400, 400, 500),
+    ]
+    events: list[dict[str, object]] = []
+
+    train_all_folds(
+        feats, ts, folds, lookback=_LOOKBACK, device="cpu", batch_size=16, max_epochs=1,
+        checkpoint_dir=Path(str(tmp_path)), git_sha="abc1234", constants_sha="deadbeef",
+        log=events.append,
+    )
+
+    completes = [e for e in events if e["type"] == "fold_complete"]
+    assert [e["fold"] for e in completes] == [0, 1]
+    for e in completes:
+        assert Path(str(e["checkpoint_path"])).exists()
+        assert np.isfinite(e["q_coverage"])  # type: ignore[arg-type]
+
+    batches = [e for e in events if e["type"] == "batch"]
+    assert batches and all(e["fold"] in (0, 1) for e in batches)
+    epochs = [e for e in events if e["type"] == "epoch"]
+    assert epochs and all("max_epochs" in e for e in epochs)
+    statuses = [e for e in events if e["type"] == "status"]
+    assert any(e["state"] == "stopped" for e in statuses)  # natural run completion
+
+
+def test_train_all_folds_stops_early_when_stop_event_set(tmp_path: object) -> None:
+    """Setting stop_event after fold 0 completes prevents fold 1 from ever starting —
+    no garbage fold_complete for an aborted fold."""
+    pytest.importorskip("torch")
+    import threading
+    from pathlib import Path
+
+    from src.data.walk_forward import Fold
+    from src.predictor.training import train_all_folds
+
+    feats, ts = _synthetic(500)
+    folds = [
+        Fold(0, 0, 150, 150, 250, 250, 300),
+        Fold(1, 150, 300, 300, 400, 400, 500),
+    ]
+    stop_event = threading.Event()
+    events: list[dict[str, object]] = []
+
+    def log(payload: dict[str, object]) -> None:
+        events.append(payload)
+        if payload["type"] == "fold_complete":
+            stop_event.set()
+
+    train_all_folds(
+        feats, ts, folds, lookback=_LOOKBACK, device="cpu", batch_size=16, max_epochs=1,
+        checkpoint_dir=Path(str(tmp_path)), git_sha="abc1234", constants_sha="deadbeef",
+        log=log, stop_event=stop_event,
+    )
+
+    completes = [e for e in events if e["type"] == "fold_complete"]
+    assert [e["fold"] for e in completes] == [0]
+    statuses = [e for e in events if e["type"] == "status"]
+    assert any(e["state"] == "stopped" for e in statuses)

@@ -170,16 +170,17 @@ Compare against `old_project.md §3` "Open Questions": every Q1–Q13 listed the
 
 ### 3.0 Phase Structure
 
-The 13-item build order maps onto a 6-phase structure that drives the git branch model and INDEX.md task→file mapping:
+The 13-item build order maps onto a 7-phase structure that drives the git branch model and INDEX.md task→file mapping (Phase 1.5 added 2026-06-30 — pulls the Training Dashboard ahead of the long run so the first run is observable; see CHANGELOG):
 
 - **Phase −1: Setup** — build items 0–3 (baseline check, doc set, `constants.py`, predictor I/O contract)
 - **Phase 0: Data** — build items 4–9 (ingest, validator, feature pipeline, per-fold scaler, walk-forward splitter, leakage suite, SHA256 manifest)
-- **Phase 1: Prediction Model** — build items 10–13 + the long training run + retrain scripts
+- **Phase 1: Prediction Model** — build items 10–13 + retrain scripts. The long training run is deferred to **Phase 1.5 exit** so it can be monitored from the start.
+- **Phase 1.5: Training Dashboard** — the browser app (`src/training_ui/`; FastAPI + vanilla JS, separate port) that makes the long run observable: first-run drag-and-drop data gate, start/stop/save controls, live fold/epoch/loss/ETA metrics, and per-fold export to `training_metrics.json` (the handoff artifact for optimization review). Built **before** the long training run launches, so the first run is watched and diagnosable. See `training-dashboard.md`.
 - **Phase 2: Environment** — paper backend, live backend, fee/slippage model, kill switch + watchdog, exchange-native stop-loss, Kraken WebSocket/REST ingest, position reconciliation
 - **Phase 3: Trading Model** — rules-based trader (sizing, confidence gate, 7-tier exit stack), backtester, robustness gate (§3.4)
-- **Phase 4: Dashboards** — two independent FastAPI + vanilla JS apps on separate ports: the **Training Dashboard** (`src/training_ui/`; start/stop/save controls, live fold/epoch metrics, first-run drag-and-drop data gate) and the **Trading Dashboard** (`src/dashboard/`; Lightweight Charts telemetry, predictor accuracy + optimization panels, kill button that writes the file-flag). See `training-dashboard.md` and `dashboard.md`.
+- **Phase 4: Dashboards** — the **Trading Dashboard** (`src/dashboard/`; FastAPI + vanilla JS + Lightweight Charts telemetry, predictor accuracy + optimization panels, kill button that writes the file-flag). The **Training Dashboard** moved to Phase 1.5. See `dashboard.md`.
 
-Branches: `phase-0-data`, `phase-1-predictor`, `phase-2-environment`, `phase-3-trader`, `phase-4-dashboard`. Each merges directly to `main` at phase exit (the `developer` integration branch was dropped per the 2026-06-28 user directive).
+Branches: `phase-0-data`, `phase-1-predictor`, `phase-15-training-ui`, `phase-2-environment`, `phase-3-trader`, `phase-4-dashboard`. Each merges directly to `main` at phase exit (the `developer` integration branch was dropped per the 2026-06-28 user directive).
 
 No time estimates attached to phases. Done is when the phase exit gates pass.
 
@@ -351,7 +352,7 @@ From Build-Order "What is NOT on the critical path." Do not let any of these blo
 - **Hyperparameter sweeps.** Lookback sweep is the one exception (it gates the long run). Everything else is post-first-paper-validation.
 - **Docker.** Rejected in v2 for good reason (single-user local). Revisit only on VPS move.
 - **PyTorch Lightning, Hugging Face Transformers, Ray/RLlib, Optuna.** All explicitly rejected in v2; rejections still hold (`old_project.md §4`).
-- **General retraining / deployment UI.** Retrain and deploy stay CLI-gated (`scripts/deploy_predictor.py` + the three deploy gates); no UI button triggers them. Distinct from the browser **Training Dashboard** (start/stop/save + live metrics + first-run data gate) and **Trading Dashboard**, both of which ARE Phase 4 deliverables — see `training-dashboard.md` / `dashboard.md`.
+- **General retraining / deployment UI.** Retrain and deploy stay CLI-gated (`scripts/deploy_predictor.py` + the three deploy gates); no UI button triggers them. Distinct from the browser **Training Dashboard** (start/stop/save + live metrics + first-run data gate; a **Phase 1.5** deliverable) and the **Trading Dashboard** (Phase 4) — see `training-dashboard.md` / `dashboard.md`.
 - **DiscoRL / meta-learned RL update rules.** DeepMind-scale infra; deferred post-August.
 
 ---

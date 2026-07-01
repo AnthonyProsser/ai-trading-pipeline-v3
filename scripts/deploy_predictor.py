@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pickle
 import sys
 from pathlib import Path
@@ -172,6 +173,13 @@ def run(args: argparse.Namespace) -> int:
     if not isinstance(tt, str):
         raise SystemExit(f"[stop] checkpoint trained_through_ts_utc is not a string: {tt!r}")
     train_coverage = float(cov)
+    if math.isnan(train_coverage):
+        raise SystemExit(
+            "[stop] checkpoint train_q90_coverage is NaN — this is a manual mid-training "
+            "snapshot (training UI 'Save' button), not a gate-evaluated checkpoint. "
+            "Refusing to deploy; use a natural fold-completion checkpoint, or pass "
+            "--train-coverage explicitly if you are certain this snapshot is deployable."
+        )
     trained_through = tt
     print(
         f"[provenance] lookback={args.lookback} train_coverage={train_coverage:.4f} "

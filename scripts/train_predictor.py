@@ -22,7 +22,6 @@ constants.py.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import subprocess
 import sys
@@ -40,9 +39,14 @@ import torch
 from constants import DATA, PREDICTOR
 from src.data.feature_pipeline import compute_features
 from src.data.manifest import sha256_file
-from src.data.scaler import PerFoldMinMaxScaler
 from src.data.validator import validate_candles
-from src.data.walk_forward import Fold, carve_locked_test, make_folds
+from src.data.walk_forward import (
+    Fold,
+    carve_locked_test,
+    carve_search_slice,
+    filter_by_historical_start,
+    make_folds,
+)
 from src.predictor.model import PatchTST
 from src.predictor.training import (
     LogFn,
@@ -50,6 +54,7 @@ from src.predictor.training import (
     evaluate_q90_coverage,
     make_run_tag,
     save_checkpoint,
+    scaler_sha,
     train_one_fold,
 )
 
@@ -65,17 +70,6 @@ def git_short_sha() -> str:
         return out.stdout.strip() or "nogit"
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
         return "nogit"
-
-
-def scaler_sha(scaler: PerFoldMinMaxScaler) -> str:
-    """Stable hash of the fitted scaler's fold statistics (part of the run tag).
-
-    Hashes the raw array buffers (not pickle) so the tag is reproducible across
-    Python versions.
-    """
-    if scaler.data_min_ is None or scaler.data_max_ is None:
-        raise ValueError("scaler_sha requires a fitted scaler")
-    return hashlib.sha256(scaler.data_min_.tobytes() + scaler.data_max_.tobytes()).hexdigest()
 
 
 def synthetic_candles(n: int, seed: int) -> CandleArrays:
@@ -109,7 +103,7 @@ def load_real_candles(path: Path) -> CandleArrays:
 
 
 def prepare(
-    *, synthetic: bool, lookback: int, fold_index: int
+    *, synthetic: bool, lookback: int, fold_index: int, search_slice: bool = False
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.datetime64], Fold]:
     """Load candles -> validate -> features, and pick the fold to train."""
     if synthetic:
@@ -135,6 +129,12 @@ def prepare(
     validated = validate_candles(timestamps, ohlcv)
     features = compute_features(validated.ohlcv)
     feature_ts = validated.timestamps[1:]
+
+    if search_slice:
+        slice_ts, slice_features, fold = carve_search_slice(feature_ts, features)
+        return slice_features, slice_ts, fold
+
+    feature_ts, features = filter_by_historical_start(feature_ts, features)
     folds = make_folds(carve_locked_test(features.shape[0]))
     if not 0 <= fold_index < len(folds):
         raise SystemExit(f"[stop] fold {fold_index} out of range (0..{len(folds) - 1})")
@@ -167,14 +167,15 @@ def make_logger(mode: str, project: str, run_tag: str) -> LogFn:
 
 
 def run(args: argparse.Namespace) -> int:
-    torch.manual_seed(PREDICTOR.SEED)
+    torch.manual_seed(args.seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(PREDICTOR.SEED)
+        torch.cuda.manual_seed_all(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     max_epochs = 1 if args.smoke else PREDICTOR.MAX_EPOCHS
 
     features, feature_ts, fold = prepare(
-        synthetic=args.synthetic, lookback=args.lookback, fold_index=args.fold
+        synthetic=args.synthetic, lookback=args.lookback, fold_index=args.fold,
+        search_slice=args.search_slice,
     )
     constants_hash = sha256_file(REPO_ROOT / "constants.py")
     git_sha = git_short_sha()
@@ -207,12 +208,13 @@ def run(args: argparse.Namespace) -> int:
                 f"val_total={metrics.val_total:.6f} (pinball/direction logged separately)"
             )
             print("[smoke] PASSED — finite loss, no OOM/NaN" if args.smoke else "[train] complete")
-            if args.synthetic:
-                # Synthetic candles carry a fabricated 2020-origin timeline, so a saved
-                # checkpoint's trained_through_ts_utc would be a plausible-but-fake date
-                # and the weights are a random-data model — never deployable. Skip the
-                # save (the save FORMAT is covered by test_save_checkpoint_round_trips).
-                print("[skip] --synthetic: checkpoint not saved (not deployable)")
+            if args.synthetic or args.search_slice:
+                # Synthetic candles carry a fabricated 2020-origin timeline, and the
+                # search-slice is a tiny pre-HISTORICAL_START dev slice — neither
+                # weights are ever deployable. Skip the save (the save FORMAT is
+                # covered by test_save_checkpoint_round_trips).
+                reason = "--synthetic" if args.synthetic else "--search-slice"
+                print(f"[skip] {reason}: checkpoint not saved (not deployable)")
             elif not args.no_save:
                 # The model now holds the best-by-val-total weights (restored inside
                 # train_one_fold). trained_through = last TRAIN candle, ISO8601 UTC.
@@ -253,11 +255,20 @@ def main() -> int:
         "--synthetic", action="store_true",
         help="random-walk candles in-memory (no real data needed)",
     )
+    ap.add_argument(
+        "--search-slice", action="store_true", dest="search_slice",
+        help="train on the small pre-HISTORICAL_START dev slice (search loop only; "
+        "never touches production folds or the locked test set)",
+    )
     ap.add_argument("--wandb", choices=("online", "offline", "disabled"), default="offline")
     ap.add_argument(
         "--batch-size", type=int, default=PREDICTOR.SMOKE_BATCH_SIZE, dest="batch_size"
     )
     ap.add_argument("--lookback", type=int, default=DATA.LOOKBACK)
+    ap.add_argument(
+        "--seed", type=int, default=PREDICTOR.SEED,
+        help="override PredictorConfig.SEED (repeat-seed search-loop confirmation runs)",
+    )
     ap.add_argument("--fold", type=int, default=0, help="walk-forward fold index (real data)")
     ap.add_argument(
         "--no-save", action="store_true", dest="no_save",

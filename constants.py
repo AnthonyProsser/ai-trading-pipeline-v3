@@ -41,6 +41,20 @@ class DataConfig:
     # Locked test set: 84 days × 1440 = 12 × 1-week non-overlapping windows
     LOCKED_TEST_CANDLES: int = 120_960
 
+    # Search dev-slice (DECISIONS.md 'search_dev_slice'): the most recent
+    # SEARCH_SLICE_TRAIN + SEARCH_SLICE_VAL candles immediately before HISTORICAL_START.
+    # Excluded from every real walk-forward fold and the locked test set, so an
+    # autoresearch-style hyperparameter/architecture search loop can iterate on real
+    # market structure without touching production data. No Bonferroni exposure to the
+    # walk-forward gate — this data never enters it.
+    SEARCH_SLICE_TRAIN: int = 20_000
+    SEARCH_SLICE_VAL: int = 8_000
+    # Bonferroni-style noise defense for the search loop (DECISIONS.md
+    # 'search_confirm_seeds'): a first-seed improvement is provisional only. It is kept
+    # if a strict majority of SEARCH_CONFIRM_SEEDS repeat-seed runs also improve on the
+    # current best; otherwise reverted as noise.
+    SEARCH_CONFIRM_SEEDS: int = 3
+
     # Feature pipeline
     NUM_INPUT_FEATURES: int = 5  # OHLC log-returns + log1p volume change
     FEATURE_NAMES: tuple[str, ...] = (
@@ -122,6 +136,10 @@ class PredictorConfig:
     CHECKPOINT_WEIGHTS_SUFFIX: str = ".pt"
     CHECKPOINT_SCALER_SUFFIX: str = ".scaler.pkl"
 
+    # Training UI fold-history export (training-dashboard.md §"Fold history export").
+    # Written under CHECKPOINT_DIR; the handoff artifact for post-training analysis.
+    TRAINING_METRICS_FILENAME: str = "training_metrics.json"
+
     # Bug regression tests (must be exposed for tests to assert against)
     EARLY_STOPPING_PATIENCE: int = 10
     VARIANCE_FLOOR_FIRST_N_STEPS: int = 100  # assert loss > 0 across these
@@ -144,6 +162,57 @@ class PredictorConfig:
     # Holdout walk-forward gate
     HOLDOUT_WINDOW_DAYS: int = 7
     HOLDOUT_NUM_WINDOWS: int = 12  # 12 × 1-week = 84 days = 120,960 candles
+
+
+# ============================================================
+# Training UI (Phase 1.5 — training-dashboard.md)
+# ============================================================
+@dataclass(frozen=True)
+class TrainingUIConfig:
+    """Presentation/behavior thresholds for the training dashboard. Values marked
+    "cosmetic default" are not written down in training-dashboard.md / DECISIONS.md;
+    they were chosen during implementation and have no correctness/safety impact
+    (display-only) — adjust freely without a DECISIONS.md amendment.
+    """
+
+    # Loss chart (training-dashboard.md §"B — Loss chart")
+    LOSS_CHART_EMA_WINDOW: int = 5  # "smoothed with a 5-epoch EMA"
+    LOSS_CHART_VISIBLE_EPOCHS: int = 200  # "the last 200 epochs are always visible"
+    BATCH_TRACE_MAX_POINTS: int = 40  # cosmetic default: raw batch-loss trace length
+
+    # Alert banners (§"J — Alert banner")
+    ALERT_AUTO_DISMISS_SECONDS: float = 8.0
+    ALERT_MAX_STACK: int = 3
+    ALERT_BEEP_FREQUENCY_HZ: int = 880  # cosmetic default: winsound.Beep pitch
+    ALERT_BEEP_DURATION_MS: int = 200  # cosmetic default: winsound.Beep length
+
+    # Loss component strip grad-norm coloring (§"E — Loss component strip").
+    # Amber past PREDICTOR.GRAD_CLIP_NORM (clipping engaged); red past this multiplier
+    # of it (possible instability).
+    GRAD_NORM_INSTABILITY_MULTIPLIER: float = 10.0
+
+    # Fold history table coloring (§"G — Fold history table")
+    FOLD_TABLE_DA_AMBER_FLOOR: float = 0.50  # amber 50-53.5%; green above
+    # PREDICTOR.DEPLOY_GATE_DA_THRESHOLD (red below amber floor)
+    FOLD_TABLE_QCOV_HEALTHY_LOWER: float = 0.85  # outside [lower, upper] -> red
+    FOLD_TABLE_QCOV_HEALTHY_UPPER: float = 0.95
+
+    # Patience bar coloring (§"H — Patience bar"). Bounds are counts against
+    # PREDICTOR.EARLY_STOPPING_PATIENCE (10): 0-4 blue, 5-7 amber, 8-9 orange, 10 red.
+    PATIENCE_AMBER_FLOOR: int = 5
+    PATIENCE_ORANGE_FLOOR: int = 8
+    # "A subtle amber glow appears behind the bar when patience >= 7"
+    PATIENCE_GLOW_FLOOR: int = 7
+
+    # ETA strip (§"F — ETA strip")
+    ETA_MIN_EPOCHS_FOR_ESTIMATE: int = 2  # "—" shown below this
+    ETA_FOLD_DURATION_EMA_ALPHA: float = 0.3  # cosmetic default: smoothing factor
+
+    # SSE transport (src/training_ui/app.py). Bounds queue.Queue.get() so a disconnected
+    # client's executor thread + subscriber entry are reclaimed within this many seconds
+    # instead of blocking forever — not in training-dashboard.md; a transport-layer
+    # correctness parameter, not display-only, but has no user-visible effect either way.
+    SSE_POLL_TIMEOUT_S: float = 1.0
 
 
 # ============================================================
@@ -206,6 +275,8 @@ class ExecutionConfig:
     # Network
     DASHBOARD_BIND_HOST: str = "127.0.0.1"
     DASHBOARD_BIND_PORT: int = 8000
+    # Training UI runs as a separate FastAPI process on its own port, same bind host.
+    TRAINING_UI_BIND_PORT: int = 8001
 
     # agent_config.json schema version. deploy_predictor refuses to overwrite a config
     # whose schema_version differs (surfaces silent schema drift). See agent-config.md.
@@ -242,6 +313,7 @@ class RLConfig:
 # ============================================================
 DATA = DataConfig()
 PREDICTOR = PredictorConfig()
+TRAINING_UI = TrainingUIConfig()
 TRADER = TraderConfig()
 EXECUTION = ExecutionConfig()
 RL = RLConfig()

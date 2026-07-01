@@ -40,8 +40,18 @@ The lookup table for every coding session. Find the row that matches the task, l
 | Implement geometry enforcement (`H ≥ max(O,C)`, `L ≤ min(O,C)`) at every inference step | `predictor-contract.md`, `src/predictor/rollout.py` |
 | Run retrain deploy gates | `predictor-contract.md`, `scripts/deploy_predictor.py` |
 | Deploy a new predictor checkpoint | `agent-config.md`, `scripts/deploy_predictor.py`, `agent_config.json` |
-| Build the Training Dashboard (browser: start/stop/save, live metrics, fold ETA) | `training-dashboard.md`, `src/training_ui/app.py` |
+
+## Phase 1.5 / Training Dashboard
+
+Built before the long training run launches, so the first run is observable and diagnosable. See `training-dashboard.md`. (Branch: `phase-15-training-ui` off `main`.)
+
+| Task | Files |
+|---|---|
+| Training Dashboard: startup data gate (KRAKEN_DATA_PATH check, no upload UI) | `training-dashboard.md`, `src/training_ui/setup_router.py` |
+| Wire training controls (start/stop/save) | `training-dashboard.md`, `src/training_ui/app.py` |
+| Wire live metrics stream (fold index, epoch, loss, ETAs) | `training-dashboard.md`, `src/training_ui/app.py` |
 | Wire fold-completion export to `training_metrics.json` | `training-dashboard.md`, `constants.py`, `src/training_ui/exporter.py` |
+| Wire fold history table from `training_metrics.json` | `training-dashboard.md`, `src/training_ui/app.py` |
 
 ## Phase 2 / Execution engine + environment
 
@@ -75,14 +85,7 @@ The lookup table for every coding session. Find the row that matches the task, l
 
 ## Phase 4 / Dashboards
 
-### Training Dashboard (`src/training_ui/`)
-
-| Task | Files |
-|---|---|
-| Training Dashboard: first-run data gate (drag-and-drop + Drive link) | `training-dashboard.md`, `src/training_ui/setup_router.py` |
-| Wire training controls (start/stop/save) | `training-dashboard.md`, `src/training_ui/app.py` |
-| Wire live metrics stream (fold index, loss, ETAs) | `training-dashboard.md`, `src/training_ui/app.py` |
-| Wire fold history table from `training_metrics.json` | `training-dashboard.md`, `src/training_ui/app.py` |
+The Training Dashboard moved to Phase 1.5. This phase builds the Trading Dashboard only.
 
 ### Trading Dashboard (`src/dashboard/`)
 
@@ -103,6 +106,7 @@ The lookup table for every coding session. Find the row that matches the task, l
 | Task | Files |
 |---|---|
 | Run the permutation test (pre-live gate) | `splits-validation.md`, `scripts/permutation_test.py` |
+| Run the predictor hyperparameter/architecture search loop | `DECISIONS.md` (`search_dev_slice`), `scripts/search_predictor.py` |
 | Run the walk-forward 12×1w gate | `splits-validation.md`, `scripts/holdout_evaluator.py` |
 | Update `agent_config.json` schema | `agent-config.md`, `agent_config.json` |
 | Amend a locked decision | `DECISIONS.md`, `CHANGELOG.md` (and the matching context card) |
