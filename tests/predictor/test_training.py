@@ -287,6 +287,9 @@ def test_save_checkpoint_round_trips(tmp_path: object) -> None:
     assert loaded["constants_sha256"] == "cafef00d"
     assert loaded["trained_through_ts_utc"] == "2020-01-01T00:00:00Z"
     assert loaded["train_q90_coverage"] == 0.83  # deploy gate (a) baseline, embedded
+    # Target-semantics guard: deploy refuses a checkpoint whose training target
+    # convention doesn't match the running code's (predictor_checkpoint_save_format).
+    assert loaded["target_semantics"] == PREDICTOR.TARGET_SEMANTICS
     PatchTST(lookback=_LOOKBACK).load_state_dict(loaded["state_dict"])  # state_dict is loadable
 
     with open(scaler_path, "rb") as fh:
@@ -541,6 +544,44 @@ def test_train_one_fold_throttles_batch_logging() -> None:
         assert key in batch_payloads[0]
     logged_steps = [int(p["step"]) for p in batch_payloads]  # type: ignore[arg-type]
     assert logged_steps == sorted(logged_steps)
+
+
+def test_lr_decays_on_val_plateau(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The LR schedule is warmup -> constant -> plateau decay: after LR_PLATEAU_PATIENCE
+    consecutive non-improving validation epochs, the LR is multiplied by
+    LR_PLATEAU_FACTOR (composing with — not fighting — the EarlyStopper, unlike a cosine
+    schedule pinned to a MAX_EPOCHS horizon that early stopping never lets anneal)."""
+    pytest.importorskip("torch")
+    import src.predictor.training as training_mod
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, train_one_fold
+
+    feats, ts = _synthetic(300)
+    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    scaler, train_loader, val_loader = build_fold_loaders(
+        feats, ts, fold, lookback=_LOOKBACK, batch_size=16
+    )
+    model = PatchTST(lookback=_LOOKBACK)
+
+    # Constant val loss: epoch 1 improves from +inf, every later epoch is a plateau.
+    monkeypatch.setattr(training_mod, "_evaluate", lambda *a, **k: (0.1, 0.1, 1.0))
+
+    lrs: list[float] = []
+
+    def spy(payload: dict[str, object]) -> None:
+        if payload["split"] == "train":
+            lrs.append(float(payload["lr"]))  # type: ignore[arg-type]
+
+    max_epochs = PREDICTOR.LR_PLATEAU_PATIENCE + 3  # enough plateau epochs to decay once
+    assert max_epochs < PREDICTOR.EARLY_STOPPING_PATIENCE  # early stop must not fire first
+    train_one_fold(
+        model, scaler, train_loader, val_loader, device="cpu", max_epochs=max_epochs, log=spy
+    )
+
+    peak = max(lrs)
+    assert peak == pytest.approx(PREDICTOR.LEARNING_RATE)  # warmup reaches the base LR
+    assert lrs[-1] == pytest.approx(peak * PREDICTOR.LR_PLATEAU_FACTOR)  # decayed once
 
 
 def test_prod_batch_size_constants_present() -> None:

@@ -13,9 +13,15 @@ All metrics use the CLOSE dimension -- the tradeable signal, consistent with the
 close-dim direction penalty and the trader's close-based confidence gate. Thresholds come
 from constants.py; this module hardcodes none.
 
+The functions are pure comparisons: pred and target must be in the SAME space. Under
+PredictorConfig.TARGET_SEMANTICS both are cumulative log-return paths (the collectors in
+src/predictor/training.py and scripts/deploy_predictor.py cumsum the raw per-step
+targets), so DA's |q50| > FEE_THRESHOLD filter compares the fee against the horizon move
+it actually applies to, and coverage/calibration score the intervals the trader trades.
+
 Tensor layout (predictor-contract.md):
     pred   : (..., NUM_OUTPUT_DIMS, NUM_QUANTILES)   quantile order q10, q50, q90
-    target : (..., NUM_OUTPUT_DIMS)                  raw log-returns
+    target : (..., NUM_OUTPUT_DIMS)                  log-returns, same space as pred
 """
 from __future__ import annotations
 

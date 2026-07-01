@@ -100,25 +100,44 @@ class PredictorConfig:
     # otherwise silently alter the architecture without invalidating the manifest.
     ACTIVATION: str = "gelu"
     NORM_FIRST: bool = True  # pre-LN; the encoder also applies a final LayerNorm
+    # RevIN-style per-window instance normalization (model-internal): each lookback
+    # window is standardised per feature (learnable affine), and the predicted quantiles
+    # are rescaled by the window's own volatility, so interval width tracks the current
+    # regime by construction. Epsilon keeps a degenerate (flat) window's sigma finite.
+    REVIN_EPS: float = 1e-5
 
-    # Output head: q10, q50, q90 per OHLCV dimension per future step
+    # Output head: q10, q50, q90 per OHLCV dimension per future step. Quantiles are
+    # non-crossing by construction (median anchor +/- cumulative softplus offsets).
     QUANTILES: tuple[float, float, float] = (0.10, 0.50, 0.90)
     NUM_OUTPUT_DIMS: int = 5  # OHLCV
+    # Prediction/target convention (DECISIONS.md 'target'): quantiles of the CUMULATIVE
+    # log-return path from the forecast origin, per horizon step. Embedded in every
+    # checkpoint; deploy refuses a checkpoint trained under a different convention.
+    TARGET_SEMANTICS: str = "cumulative_logret"
 
     # Rollout geometry enforcement (predictor-contract.md §"Geometry enforcement")
     # H >= max(O,C) and L <= min(O,C) per emitted step and quantile; a violating
     # stochastic sample is redrawn up to this many times before a deterministic clamp.
     GEOMETRY_RESAMPLE_CAP: int = 5
 
-    # Loss
+    # Loss: pinball on the cumulative path + direction penalty on the FINAL-horizon
+    # cumulative close only (DECISIONS.md 'loss'). The fee is a per-trade round-trip
+    # cost, so it is compared against the whole horizon move, never a single step.
     DIRECTION_PENALTY_LAMBDA: float = 1.75  # range [1.5, 2.0]
 
-    # Training loop (predictor-training.md §"Smoke run"). AdamW + cosine schedule with
-    # linear warmup; AMP (bf16) on the 4060. MAX_EPOCHS is an upper bound — the
-    # EarlyStopper (patience below) terminates earlier in practice.
+    # Training loop. AdamW; linear warmup then constant LR with plateau decay (the
+    # previous cosine schedule annealed over a MAX_EPOCHS horizon that early stopping
+    # never let it reach, so real runs trained at near-peak LR throughout); AMP (bf16)
+    # on the 4060. MAX_EPOCHS is an upper bound — the EarlyStopper (patience below)
+    # terminates earlier in practice.
     LEARNING_RATE: float = 3e-4
     WEIGHT_DECAY: float = 1e-2
-    WARMUP_FRAC: float = 0.05  # linear warmup over the first 5% of total steps
+    WARMUP_FRAC: float = 0.01  # linear warmup over the first 1% of planned steps
+    # Multiply the LR by FACTOR after PATIENCE consecutive non-improving validation
+    # epochs. PATIENCE is deliberately < EARLY_STOPPING_PATIENCE so the LR gets at
+    # least two decays' worth of chances to un-stick a plateau before training stops.
+    LR_PLATEAU_FACTOR: float = 0.5
+    LR_PLATEAU_PATIENCE: int = 3
     GRAD_CLIP_NORM: float = 1.0
     MAX_EPOCHS: int = 100
     USE_AMP: bool = True
