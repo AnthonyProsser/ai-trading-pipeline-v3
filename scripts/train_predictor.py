@@ -187,7 +187,8 @@ def run(args: argparse.Namespace) -> int:
     for batch_size in batch_candidates:
         try:
             scaler, train_loader, val_loader = build_fold_loaders(
-                features, feature_ts, fold, lookback=args.lookback, batch_size=batch_size
+                features, feature_ts, fold, lookback=args.lookback, batch_size=batch_size,
+                device=device,
             )
             model = PatchTST(lookback=args.lookback)
             run_tag = make_run_tag(

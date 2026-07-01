@@ -13,6 +13,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from src.training_ui.app import TrainingRunner, create_app
 
 
@@ -173,6 +175,50 @@ def test_http_history_reads_exporter_records(tmp_path: Path) -> None:
     resp = client.get("/api/training/history")
     assert resp.status_code == 200
     assert resp.json() == [rec]
+
+
+def test_default_run_training_filters_pre_historical_start_candles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the dashboard's real-data path must drop pre-HISTORICAL_START
+    candles before building folds, exactly like scripts/train_predictor.py::prepare
+    does — without the filter the full Kraken CSV (2013+) inflates the fold count."""
+    import numpy as np
+    import numpy.typing as npt
+
+    import src.training_ui.app as app_module
+    from constants import DATA
+    from src.data.walk_forward import Fold, carve_locked_test, make_folds
+
+    # n_post yields exactly 1 fold after the locked-test carve; the pre-cutoff candles
+    # would add 2 more folds if they leaked through unfiltered.
+    n_pre, n_post = 110_000, 331_000
+    cutoff = np.datetime64(DATA.HISTORICAL_START, "m")
+    timestamps = cutoff + np.arange(-n_pre, n_post) * np.timedelta64(1, "m")
+    ohlcv = np.tile(np.array([100.0, 101.0, 99.0, 100.0, 1.0]), (timestamps.shape[0], 1))
+    monkeypatch.setattr(app_module, "_load_real_candles", lambda path: (timestamps, ohlcv))
+
+    captured: dict[str, object] = {}
+
+    def fake_train_all_folds(
+        features: npt.NDArray[np.float64],
+        feature_ts: npt.NDArray[np.datetime64],
+        folds: list[Fold],
+        **kwargs: object,
+    ) -> None:
+        captured["feature_ts"] = feature_ts
+        captured["folds"] = folds
+
+    monkeypatch.setattr(app_module, "train_all_folds", fake_train_all_folds)
+
+    app_module._default_run_training(_runner(tmp_path))
+
+    feature_ts = captured["feature_ts"]
+    folds = captured["folds"]
+    assert isinstance(feature_ts, np.ndarray)
+    assert isinstance(folds, list)
+    assert feature_ts.min() >= cutoff
+    assert len(folds) == len(make_folds(carve_locked_test(n_post)))
 
 
 def test_http_start_success_returns_running_state(tmp_path: Path) -> None:
