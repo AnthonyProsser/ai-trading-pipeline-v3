@@ -70,7 +70,11 @@ def patch_constants(text: str, fields: dict[str, Any]) -> str:
         if not pattern.search(text):
             raise ValueError(f"field {name} not found in constants.py")
         replacement = repr(value)
-        text = pattern.sub(lambda m: m.group(1) + replacement + "  # search_predictor.py", text, count=1)
+
+        def _replace(m: re.Match[str], r: str = replacement) -> str:
+            return m.group(1) + r + "  # search_predictor.py"
+
+        text = pattern.sub(_replace, text, count=1)
     return text
 
 
@@ -120,7 +124,9 @@ def extract_json_object(text: str) -> dict[str, Any]:
     return dict(json.loads(match.group(0)))
 
 
-def propose(history: list[dict[str, Any]], current: dict[str, Any], best: float | None) -> dict[str, Any]:
+def propose(
+    history: list[dict[str, Any]], current: dict[str, Any], best: float | None
+) -> dict[str, Any]:
     prompt = f"""You are proposing ONE candidate hyperparameter/architecture change for a
 PatchTST BTC predictor. Candidates are trained on a small dev slice and compared by
 val_total (pinball + direction-penalty loss; lower is better).
@@ -130,7 +136,8 @@ Search space (hard bounds):
 
 Current PredictorConfig values: {json.dumps(current)}
 Current best val_total so far: {best}
-Recent iteration history, most recent last (kept=false means reverted): {json.dumps(history[-8:], indent=2)}
+Recent iteration history, most recent last (kept=false means reverted):
+{json.dumps(history[-8:], indent=2)}
 
 Constraints: D_MODEL must be evenly divisible by N_HEADS. Change 1-3 fields from
 current, not all of them. Do not repeat a combination already present in the history.
@@ -211,7 +218,9 @@ def run_iteration(iteration: int, confirm_seeds: int) -> None:
         CONSTANTS_PATH.write_text(original_text, encoding="utf-8")
         resolved = True
         print(f"[reject] {reason}")
-        append_log({"iteration": iteration, "changes": changes, "kept": False, "reason": reason, **extra})
+        append_log(
+            {"iteration": iteration, "changes": changes, "kept": False, "reason": reason, **extra}
+        )
 
     try:
         first_val = run_training(seed=0)
@@ -254,7 +263,10 @@ def run_iteration(iteration: int, confirm_seeds: int) -> None:
         # with no matching log entry.
         if not resolved:
             CONSTANTS_PATH.write_text(original_text, encoding="utf-8")
-            print("[reject] iteration interrupted before a keep/revert decision -- restored constants.py")
+            print(
+                "[reject] iteration interrupted before a keep/revert decision -- "
+                "restored constants.py"
+            )
 
 
 def main() -> int:
