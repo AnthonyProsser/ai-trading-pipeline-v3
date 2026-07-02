@@ -79,6 +79,28 @@ def test_gradient_widens_undercovering_intervals() -> None:
     assert float(pred.grad[..., _CLOSE, _Q10].sum()) > 0.0
 
 
+def test_gradient_is_width_only_zero_net_median_force() -> None:
+    # Empirically diagnosed failure mode (bake-off runs at weight 1.0 and 0.1, fold 0,
+    # 3 seeds): tail-coverage gradients flowing through the monotone head's shared
+    # median anchor dragged q50 systematically, collapsing directional accuracy to a
+    # coin flip (0.537 -> ~0.49). The penalty must therefore act on interval WIDTH
+    # only: through the model head (q_tail = q50_anchor +/- softplus offsets, each
+    # dq_tail/danchor = 1) the anchor's total gradient is grad_q10 + grad_q50 +
+    # grad_q90, so exact cancellation requires grad_q50 == -(grad_q10 + grad_q90)
+    # elementwise at the pred leaf.
+    pred, target_cum = _gaussian_case(scale=0.5)
+    pred = pred.clone().requires_grad_()
+    coverage_penalty(pred, target_cum).backward()
+    assert pred.grad is not None
+    q50_idx = PREDICTOR.QUANTILES.index(0.50)
+    anchor_force = (
+        pred.grad[..., _CLOSE, _Q10]
+        + pred.grad[..., _CLOSE, q50_idx]
+        + pred.grad[..., _CLOSE, _Q90]
+    )
+    assert float(anchor_force.abs().max()) == pytest.approx(0.0, abs=1e-12)
+
+
 def test_close_dimension_only() -> None:
     # Gates and trader read close only; the penalty must ignore every other dim.
     pred, target_cum = _gaussian_case(scale=0.5)
