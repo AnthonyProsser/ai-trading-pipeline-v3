@@ -104,6 +104,26 @@ def test_gradient_is_width_only_zero_net_median_force() -> None:
     assert float(anchor_force.abs().max()) < 1e-9
 
 
+def test_gradient_cancellation_holds_under_bf16_autocast() -> None:
+    # Real training wraps the loss in torch.autocast(bf16) with fp32 leaf parameters
+    # (train_one_fold). The anchor cancellation must hold on that path too, not only
+    # in the pure-fp32 case above — the penalty casts its own inputs to fp32, and
+    # gradients accumulate in the fp32 leaf's dtype.
+    pred, target_cum = _gaussian_case(scale=0.5)
+    pred = pred.clone().requires_grad_()  # fp32 leaf, as model params are under AMP
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        penalty = coverage_penalty(pred, target_cum)
+    penalty.backward()
+    assert pred.grad is not None
+    q50_idx = PREDICTOR.QUANTILES.index(0.50)
+    anchor_force = (
+        pred.grad[..., _CLOSE, _Q10]
+        + pred.grad[..., _CLOSE, q50_idx]
+        + pred.grad[..., _CLOSE, _Q90]
+    )
+    assert float(anchor_force.abs().max()) < 1e-9
+
+
 def test_close_dimension_only() -> None:
     # Gates and trader read close only; the penalty must ignore every other dim.
     pred, target_cum = _gaussian_case(scale=0.5)
