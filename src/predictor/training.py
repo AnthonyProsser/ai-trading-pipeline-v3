@@ -212,9 +212,9 @@ def _evaluate(
     loader: _WindowLoader,
     device: torch.device,
     use_amp: bool,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float]:
     model.eval()
-    pinball = direction = total = 0.0
+    pinball = direction = coverage = total = 0.0
     batches = 0
     with torch.no_grad():
         for x, y in loader:
@@ -223,11 +223,12 @@ def _evaluate(
                 comp = predictor_loss(model(x), y)
             pinball += float(comp.pinball)
             direction += float(comp.direction)
+            coverage += float(comp.coverage)
             total += float(comp.total)
             batches += 1
     if batches == 0:
         raise RuntimeError("val_loader yielded no batches — fold or batch_size misconfigured")
-    return pinball / batches, direction / batches, total / batches
+    return pinball / batches, direction / batches, coverage / batches, total / batches
 
 
 def train_one_fold(
@@ -311,6 +312,7 @@ def train_one_fold(
         # is needed; converted to Python floats once at epoch end.
         ep_pin = torch.zeros((), device=dev)
         ep_dir = torch.zeros((), device=dev)
+        ep_cov = torch.zeros((), device=dev)
         ep_tot = torch.zeros((), device=dev)
         ep_batches = 0
         n_batches = len(train_loader)
@@ -346,6 +348,7 @@ def train_one_fold(
             step += 1
             ep_pin += comp.pinball.detach()
             ep_dir += comp.direction.detach()
+            ep_cov += comp.coverage.detach()
             ep_tot += comp.total.detach()
             ep_batches += 1
             is_last_batch = (batch_idx == n_batches - 1) or (
@@ -369,6 +372,7 @@ def train_one_fold(
                         "epoch": epoch,
                         "pinball": float(comp.pinball),
                         "direction": float(comp.direction),
+                        "coverage": float(comp.coverage),
                         "total": batch_tot,
                         "lr": lr_now,
                         "grad_norm": float(grad_norm_t),
@@ -385,13 +389,14 @@ def train_one_fold(
         if ep_batches > 0:
             train_pin = float(ep_pin) / ep_batches
             train_dir = float(ep_dir) / ep_batches
+            train_cov = float(ep_cov) / ep_batches
             train_tot = float(ep_tot) / ep_batches
             if not math.isfinite(train_tot):
                 raise ValueError(
                     f"non-finite training loss in epoch {epochs_run}: mean total={train_tot}"
                 )
 
-        val_pin, val_dir, val_tot = _evaluate(model, val_loader, dev, use_amp)
+        val_pin, val_dir, val_cov, val_tot = _evaluate(model, val_loader, dev, use_amp)
         if not math.isfinite(val_tot):
             raise ValueError(f"non-finite validation loss at epoch {epochs_run}: total={val_tot}")
         if val_tot < best_val:
@@ -417,9 +422,11 @@ def train_one_fold(
                     "epoch": epoch,
                     "train_pinball": train_pin,
                     "train_direction": train_dir,
+                    "train_coverage": train_cov,
                     "train_total": train_tot,
                     "val_pinball": val_pin,
                     "val_direction": val_dir,
+                    "val_coverage": val_cov,
                     "val_total": val_tot,
                     "patience": stopper.num_bad,
                     "best_val_total": best_val,
