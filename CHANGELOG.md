@@ -13,6 +13,13 @@ Format:
 
 ---
 
+## 2026-07-01 — Loss amendment: width-only coverage penalty (calibration-to-nominal)
+- loss: `pinball + λ×direction` → `pinball + λ×direction + COVERAGE_PENALTY_WEIGHT×coverage_penalty`; new decision key `loss_coverage_penalty`. New `PredictorConfig` constants: `COVERAGE_PENALTY_WEIGHT = 1.0`, `COVERAGE_PENALTY_TEMPERATURE_FRAC = 0.02`, `COVERAGE_PENALTY_STD_FLOOR = 1e-8`. `LossComponents` gains a `coverage` field; all existing consumers read fields by name.
+- Reason: the capped bake-off (`scripts/eval_predictor.py`, fold 0, 3 seeds, 20 epochs) measured under-coverage on the cumulative model — q90_coverage 0.866 vs 0.90 nominal, calibration_rate 0.747 vs 0.80, both tails too narrow. Pinball's marginal calibration pressure is ∝ the coverage gap spread over all 45 (dim × quantile) coordinates — too weak at capped budgets. The new term optimizes the two calibration deploy-gate metrics directly on the close dim and is self-limiting (gradient vanishes at nominal coverage).
+- Design guards forced by measured failures during the same bake-off (three disclosed iterations on identical fold/seeds): (1) width-only anchor-gradient cancellation (`q_τ + (q50.detach() − q50)`) — without it, tail-coverage force drags the shared median anchor and collapses DA 0.537→~0.49 at weights 1.0 and 0.1 alike; (2) `temperature_frac` 0.1→0.02 — the smooth indicator's kernel bias (∝ temperature²) mislocates the coverage fixed point, overshooting hard coverage to 0.964/0.930; (3) fp32 sigmoid path under bf16 autocast (python-reviewer finding).
+- Final measured result (same fold/seeds, vs pre-amendment baseline): q90_coverage 0.866→0.902±0.023, calibration_rate 0.747→0.826±0.031 (inside deploy-gate band), DA 0.537→0.529±0.010 (within seed noise), captured 0.254→0.256, adverse 0.230→0.229, n_used 10,377→14,836. Cost: sharpness 0.0065→0.084 (honestly wider intervals), ~55% slower epochs.
+- Source: conversation 2026-07-01 (fable5-calibration-improve branch; empirical bake-off, three iterations reported including the two negative results)
+
 ## 2026-07-01 — Predictor rework (fable-5-restructuring): cumulative targets, monotone quantiles, RevIN, horizon-level direction penalty, plateau LR
 - target: per-step log-return per OHLCV dim → quantiles of the **cumulative** log-return path from the forecast origin (`PredictorConfig.TARGET_SEMANTICS = "cumulative_logret"`). Quantiles are not additive; per-step quantiles cannot give a calibrated interval for the 15-minute move the trader trades. Loaders/WindowDataset unchanged (raw per-step targets); `predictor_loss` and the gate collectors cumsum.
 - output_head: independent per-quantile outputs → monotone head (median anchor ± cumulative softplus offsets); q10 ≤ q50 ≤ q90 by construction.
