@@ -13,6 +13,11 @@ Format:
 
 ---
 
+## 2026-07-01 — Loss amendment: explicit coverage penalty (calibration-to-nominal)
+- loss: `pinball + λ×direction` → `pinball + λ×direction + COVERAGE_PENALTY_WEIGHT×coverage_penalty`; new decision key `loss_coverage_penalty`. New `PredictorConfig` constants: `COVERAGE_PENALTY_WEIGHT = 1.0`, `COVERAGE_PENALTY_TEMPERATURE_FRAC = 0.1`, `COVERAGE_PENALTY_STD_FLOOR = 1e-8` (proposed working values, pending full-run validation). `LossComponents` gains a `coverage` field; all existing consumers read fields by name.
+- Reason: the capped bake-off (`scripts/eval_predictor.py`, fold 0, 3 seeds, 20 epochs) measured under-coverage on the cumulative model — q90_coverage 0.866 vs 0.90 nominal, calibration_rate 0.747 vs 0.80, both tails too narrow. Pinball's marginal calibration pressure is ∝ the coverage gap spread over all 45 (dim × quantile) coordinates — too weak at capped budgets — while the direction penalty concentrates learning on the q50 close coordinate. The new term optimizes the two calibration deploy-gate metrics directly on the close dim and is self-limiting (gradient vanishes at nominal coverage). Kept only if the same-fold/same-seed bake-off confirms improvement without regressing DA/captured-fraction beyond seed noise.
+- Source: conversation 2026-07-01 (fable5-calibration-improve branch; empirical bake-off follow-up)
+
 ## 2026-07-01 — Predictor rework (fable-5-restructuring): cumulative targets, monotone quantiles, RevIN, horizon-level direction penalty, plateau LR
 - target: per-step log-return per OHLCV dim → quantiles of the **cumulative** log-return path from the forecast origin (`PredictorConfig.TARGET_SEMANTICS = "cumulative_logret"`). Quantiles are not additive; per-step quantiles cannot give a calibrated interval for the 15-minute move the trader trades. Loaders/WindowDataset unchanged (raw per-step targets); `predictor_loss` and the gate collectors cumsum.
 - output_head: independent per-quantile outputs → monotone head (median anchor ± cumulative softplus offsets); q10 ≤ q50 ≤ q90 by construction.

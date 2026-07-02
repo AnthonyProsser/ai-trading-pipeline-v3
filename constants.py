@@ -124,6 +124,20 @@ class PredictorConfig:
     # cumulative close only (DECISIONS.md 'loss'). The fee is a per-trade round-trip
     # cost, so it is compared against the whole horizon move, never a single step.
     DIRECTION_PENALTY_LAMBDA: float = 1.75  # range [1.5, 2.0]
+    # Coverage penalty (DECISIONS.md 'loss', amended 2026-07-01): squared gap between
+    # smooth empirical batch coverage and the nominal tail levels (0.10/0.90), close
+    # dim only, averaged over horizon steps. Directly optimizes the two calibration
+    # gate metrics — the capped bake-off measured under-coverage on the cumulative
+    # model (q90_coverage 0.866 vs 0.90 nominal, calibration_rate 0.747 vs 0.80) —
+    # and is self-limiting: the gradient is proportional to the coverage gap, so it
+    # vanishes once coverage reaches nominal instead of fighting pinball's optimum.
+    COVERAGE_PENALTY_WEIGHT: float = 1.0
+    # Sigmoid indicator width as a FRACTION of the batch's per-step close-target std:
+    # relative (not absolute) so the indicator stays proportionally sharp as the
+    # cumulative path's variance grows across horizon steps.
+    COVERAGE_PENALTY_TEMPERATURE_FRAC: float = 0.1
+    # Floors the indicator width so a degenerate flat batch (zero std) cannot /0.
+    COVERAGE_PENALTY_STD_FLOOR: float = 1e-8
 
     # Training loop. AdamW; linear warmup then constant LR with plateau decay (the
     # previous cosine schedule annealed over a MAX_EPOCHS horizon that early stopping
