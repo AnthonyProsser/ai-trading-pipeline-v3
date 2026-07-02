@@ -46,7 +46,9 @@ import torch
 from constants import DATA, EXECUTION, PREDICTOR
 
 _CLOSE_DIM = DATA.FEATURE_NAMES.index("close_logret")  # OHLCV close index (== 3)
+_Q10 = PREDICTOR.QUANTILES.index(0.10)  # lower-tail quantile index (== 0)
 _Q50 = PREDICTOR.QUANTILES.index(0.50)  # median quantile index (== 1)
+_Q90 = PREDICTOR.QUANTILES.index(0.90)  # upper-tail quantile index (== 2)
 
 
 class LossComponents(NamedTuple):
@@ -95,30 +97,32 @@ def direction_penalty(
 def coverage_penalty(
     pred: torch.Tensor,
     target: torch.Tensor,
-    quantiles: tuple[float, ...] = PREDICTOR.QUANTILES,
-    *,
     temperature_frac: float = PREDICTOR.COVERAGE_PENALTY_TEMPERATURE_FRAC,
     std_floor: float = PREDICTOR.COVERAGE_PENALTY_STD_FLOOR,
 ) -> torch.Tensor:
     """Squared gap between smooth empirical batch coverage and the nominal tail levels.
 
-    For each non-median quantile tau, coverage is estimated per horizon step as the
-    batch mean of ``sigmoid((q_tau - y) / s)`` on the **close** dim (the dim every
-    deploy gate and the trader read, same precedent as the direction penalty), where
-    ``s = temperature_frac * std(y)`` per step — relative so the indicator stays
-    proportionally sharp as the cumulative path's variance grows with the horizon.
-    Penalty = sum over tails of the horizon-mean of ``(coverage - tau)^2``; the
-    gradient widens under-covering intervals and vanishes at nominal coverage.
-    ``target`` must be ALREADY-cumulative (predictor_loss passes the cumsummed path).
+    For each tail quantile (the locked gate levels ``_Q10``/``_Q90``), coverage is
+    estimated per horizon step as the batch mean of ``sigmoid((q_tau - y) / s)`` on the
+    **close** dim (the dim every deploy gate and the trader read, same precedent as the
+    direction penalty), where ``s = temperature_frac * std(y)`` per step — relative so
+    the indicator stays proportionally sharp as the cumulative path's variance grows
+    with the horizon. Penalty = sum over tails of the horizon-mean of
+    ``(coverage - tau)^2``; the gradient widens under-covering intervals and vanishes
+    at nominal coverage. ``target`` must be ALREADY-cumulative (predictor_loss passes
+    the cumsummed path).
+
+    Computed in fp32 even under bf16 autocast: ``(q - y) / s`` divides a cancelled
+    small difference by a small scale, and a saturated sigmoid's gradient underflows
+    to exactly zero in bf16 precisely where the penalty must push hardest.
     """
-    y = target[..., _CLOSE_DIM]  # (B, H)
+    y = target[..., _CLOSE_DIM].float()  # (B, H)
     # correction=0: a batch of one window must not produce a NaN std.
     s = y.std(dim=0, keepdim=True, correction=0) * temperature_frac + std_floor  # (1, H)
-    penalty = pred.new_zeros(())
-    for q_idx, tau in enumerate(quantiles):
-        if tau == 0.5:
-            continue
-        q = pred[..., _CLOSE_DIM, q_idx]  # (B, H)
+    penalty = torch.zeros((), dtype=torch.float32, device=pred.device)
+    for q_idx in (_Q10, _Q90):
+        tau = PREDICTOR.QUANTILES[q_idx]
+        q = pred[..., _CLOSE_DIM, q_idx].float()  # (B, H)
         smooth_coverage = torch.sigmoid((q - y) / s).mean(dim=0)  # (H,)
         penalty = penalty + ((smooth_coverage - tau) ** 2).mean()
     return penalty
@@ -141,6 +145,6 @@ def predictor_loss(
     target_cum = torch.cumsum(target, dim=1)
     pinball = pinball_loss(pred, target_cum, quantiles)
     direction = direction_penalty(pred, target_cum, fee_threshold)
-    coverage = coverage_penalty(pred, target_cum, quantiles)
+    coverage = coverage_penalty(pred, target_cum)
     total = pinball + lambda_ * direction + coverage_weight * coverage
     return LossComponents(pinball=pinball, direction=direction, coverage=coverage, total=total)
