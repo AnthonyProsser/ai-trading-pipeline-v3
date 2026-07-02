@@ -176,6 +176,21 @@ def test_aggregate_seeds_skips_nan_seed(ep: Any) -> None:
     assert "n_used" not in agg["economic_std"]
 
 
+def test_aggregate_seeds_includes_timing_group(ep: Any) -> None:
+    # A `timing` group (train speed) is aggregated like any other group when present, and
+    # its absence (e.g. the checkpoint `eval` path) must not break aggregation.
+    seed_results = [
+        {"statistical": {"q90_coverage": 0.90}, "economic": {"mean_captured_fraction": 0.4},
+         "timing": {"wall_seconds": 10.0, "seconds_per_epoch": 1.0, "epochs": 10.0}},
+        {"statistical": {"q90_coverage": 0.90}, "economic": {"mean_captured_fraction": 0.6},
+         "timing": {"wall_seconds": 12.0, "seconds_per_epoch": 1.2, "epochs": 10.0}},
+    ]
+    agg = ep.aggregate_seeds("new", "cumulative_logret", seed_results)
+    assert agg["timing"]["wall_seconds"] == pytest.approx(11.0)
+    assert agg["timing"]["seconds_per_epoch"] == pytest.approx(1.1)
+    assert agg["timing_std"]["wall_seconds"] == pytest.approx(1.0, abs=1e-9)
+
+
 def test_aggregate_seeds_single_seed_zero_std(ep: Any) -> None:
     seed_results = [
         {"statistical": {"q90_coverage": 0.9}, "economic": {"mean_captured_fraction": 0.5}},

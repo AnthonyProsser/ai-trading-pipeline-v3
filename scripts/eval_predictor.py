@@ -44,6 +44,7 @@ import argparse
 import json
 import math
 import sys
+import time
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -257,15 +258,33 @@ def train_and_evaluate_seed(
         features, feature_ts, fold, lookback=lookback, batch_size=batch_size, device=device
     )
     model = PatchTST(lookback=lookback)
-    train_one_fold(
+    # Wall-clock for the whole train_one_fold call, INCLUDING its per-epoch validation passes
+    # (not pure backward-pass time). Reported as a SECONDARY signal only — a faster model is
+    # preferable at equal quality, never at the expense of the metrics above. CUDA kernels are
+    # async, so we sync on BOTH sides of the timed region to avoid folding neighbouring seeds'
+    # queued work into this measurement or stopping the clock before the GPU is done.
+    dev_is_cuda = torch.device(device).type == "cuda"
+    if dev_is_cuda:
+        torch.cuda.synchronize()
+    start = time.perf_counter()
+    fold_metrics = train_one_fold(
         model, scaler, train_loader, val_loader,
         device=device, max_epochs=max_epochs, max_steps=max_steps,
     )
+    if dev_is_cuda:
+        torch.cuda.synchronize()
+    elapsed = time.perf_counter() - start
+    epochs = max(1, fold_metrics.epochs)
     pred, target_raw = _gather(model, val_loader)
     target_model = target_to_model_space(target_raw, SEMANTICS)
     result = {
         "statistical": statistical_metrics(pred, target_model),
         "economic": excursion_metrics(pred, target_raw, SEMANTICS),
+        "timing": {
+            "wall_seconds": elapsed,
+            "seconds_per_epoch": elapsed / epochs,
+            "epochs": float(fold_metrics.epochs),
+        },
     }
     # Release the seed's model + device-resident fold tensors before the next seed builds
     # its own — cheap insurance for an unattended multi-seed loop on CUDA.
@@ -283,13 +302,18 @@ def aggregate_seeds(
     NaN-tolerant: a seed with zero tradeable windows yields NaN economic metrics; those are
     skipped so one unlucky seed cannot poison the aggregate. ``n_used`` is a count (the val
     split is fold-fixed across seeds), so it is reported once (max) rather than averaged/std'd.
+    Every metric group present in the seed records (``statistical``/``economic``/``timing``)
+    is aggregated the same way; a group's absence (e.g. the checkpoint ``eval`` path has no
+    ``timing``) is simply skipped.
     """
     def agg(group: str) -> tuple[dict[str, float], dict[str, float]]:
         keys = seed_results[0][group].keys()
         mean: dict[str, float] = {}
         std: dict[str, float] = {}
         for key in keys:
-            values = [float(r[group][key]) for r in seed_results]
+            # `.get(..., nan)` so a seed missing this group/key can't KeyError the whole
+            # aggregate — the NaN is then skipped by the finite-filter below.
+            values = [float(r.get(group, {}).get(key, float("nan"))) for r in seed_results]
             if key == "n_used":
                 mean[key] = float(max(values))  # count, not a quality metric — no std
                 continue
@@ -298,17 +322,16 @@ def aggregate_seeds(
             std[key] = float(np.std(finite)) if finite else float("nan")
         return mean, std
 
-    stat_mean, stat_std = agg("statistical")
-    econ_mean, econ_std = agg("economic")
-    return {
+    out: dict[str, object] = {
         "label": label,
         "semantics": semantics,
         "seeds": len(seed_results),
-        "statistical": stat_mean,
-        "statistical_std": stat_std,
-        "economic": econ_mean,
-        "economic_std": econ_std,
     }
+    for group in seed_results[0]:
+        mean, std = agg(group)
+        out[group] = mean
+        out[f"{group}_std"] = std
+    return out
 
 
 def run_bakeoff(
@@ -350,6 +373,7 @@ def run_bakeoff(
 _STAT_ROWS = ["q90_coverage", "calibration_rate", "directional_accuracy", "sharpness_close",
               "pinball"]
 _ECON_ROWS = ["mean_captured_fraction", "median_captured_fraction", "mean_adverse_ratio", "n_used"]
+_TIMING_ROWS = ["wall_seconds", "seconds_per_epoch", "epochs"]
 
 
 def _fmt(value: object) -> str:
@@ -368,7 +392,7 @@ def format_comparison(results: list[dict[str, object]]) -> str:
     def row(name: str, group: str) -> str:
         cells = ""
         for r in results:
-            metrics = r[group]
+            metrics = r.get(group, {}) if isinstance(r, dict) else {}
             value = metrics.get(name, "-") if isinstance(metrics, dict) else "-"
             cells += _fmt(value).rjust(width + 2)
         return name.ljust(24) + cells
@@ -380,6 +404,9 @@ def format_comparison(results: list[dict[str, object]]) -> str:
     lines += [row(n, "statistical") for n in _STAT_ROWS]
     lines.append("[economic — comparable across branches]")
     lines += [row(n, "economic") for n in _ECON_ROWS]
+    if any("timing" in r for r in results):
+        lines.append("[timing — secondary: faster is better only at equal quality]")
+        lines += [row(n, "timing") for n in _TIMING_ROWS]
     return "\n".join(lines)
 
 
