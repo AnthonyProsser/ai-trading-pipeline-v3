@@ -135,7 +135,7 @@ class PredictorConfig:
     # Sigmoid indicator width as a FRACTION of the batch's per-step close-target std:
     # relative (not absolute) so the indicator stays proportionally sharp as the
     # cumulative path's variance grows across horizon steps.
-    COVERAGE_PENALTY_TEMPERATURE_FRAC: float = 0.1
+    COVERAGE_PENALTY_TEMPERATURE_FRAC: float = 0.02
     # Floors the indicator width so a degenerate flat batch (zero std) cannot /0.
     COVERAGE_PENALTY_STD_FLOOR: float = 1e-8
 
