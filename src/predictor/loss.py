@@ -115,14 +115,23 @@ def coverage_penalty(
     Computed in fp32 even under bf16 autocast: ``(q - y) / s`` divides a cancelled
     small difference by a small scale, and a saturated sigmoid's gradient underflows
     to exactly zero in bf16 precisely where the penalty must push hardest.
+
+    WIDTH-ONLY by construction: the first bake-off runs (weights 1.0 and 0.1, fold 0,
+    3 seeds) showed tail gradients flowing through the monotone head's shared median
+    anchor drag q50 systematically and collapse directional accuracy to a coin flip.
+    Each tail is therefore evaluated as ``q_tail + (q50.detach() - q50)`` — the exact
+    same VALUE (adds zero), but the anchor's gradient path cancels, so the penalty can
+    only widen or narrow the softplus offsets, never move the median.
     """
     y = target[..., _CLOSE_DIM].float()  # (B, H)
     # correction=0: a batch of one window must not produce a NaN std.
     s = y.std(dim=0, keepdim=True, correction=0) * temperature_frac + std_floor  # (1, H)
+    q50 = pred[..., _CLOSE_DIM, _Q50].float()  # (B, H)
+    anchor_free = q50.detach() - q50  # exactly zero-valued; cancels the anchor gradient
     penalty = torch.zeros((), dtype=torch.float32, device=pred.device)
     for q_idx in (_Q10, _Q90):
         tau = PREDICTOR.QUANTILES[q_idx]
-        q = pred[..., _CLOSE_DIM, q_idx].float()  # (B, H)
+        q = pred[..., _CLOSE_DIM, q_idx].float() + anchor_free  # (B, H)
         smooth_coverage = torch.sigmoid((q - y) / s).mean(dim=0)  # (H,)
         penalty = penalty + ((smooth_coverage - tau) ** 2).mean()
     return penalty

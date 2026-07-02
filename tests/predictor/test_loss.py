@@ -98,7 +98,10 @@ def test_gradient_is_width_only_zero_net_median_force() -> None:
         + pred.grad[..., _CLOSE, q50_idx]
         + pred.grad[..., _CLOSE, _Q90]
     )
-    assert float(anchor_force.abs().max()) == pytest.approx(0.0, abs=1e-12)
+    # fp32 rounding leaves a tiny residual (~1e-11) from the separate backward paths;
+    # the uncancelled anchor force in the failing implementation was ~1e-4 — six
+    # orders larger — so 1e-9 cleanly separates "cancelled" from "not cancelled".
+    assert float(anchor_force.abs().max()) < 1e-9
 
 
 def test_close_dimension_only() -> None:
