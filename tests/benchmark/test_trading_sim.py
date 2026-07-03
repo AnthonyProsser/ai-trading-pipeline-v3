@@ -26,7 +26,6 @@ from src.benchmark.trading_sim import (
     random_entry_null,
     simulate_trades,
 )
-from src.data.walk_forward import Fold
 
 _CLOSE = DATA.FEATURE_NAMES.index("close_logret")
 _Q10 = PREDICTOR.QUANTILES.index(0.10)
@@ -180,22 +179,16 @@ def test_random_entry_null_zero_trades_is_nan() -> None:
     assert math.isnan(out["p_value"])
 
 
-# --- eval slice bounds (engine helper) -----------------------------------------
-
-def test_eval_slice_bounds_targets_stay_inside_test_slice() -> None:
-    from src.benchmark.engine import eval_slice_bounds
-
-    fold = Fold(0, 0, 150_000, 150_000, 200_000, 200_000, 210_000)
-    start, end = eval_slice_bounds(fold, lookback=1_440)
-    assert (start, end) == (200_000 - 1_440, 210_000)
-    # Window origins i in [0, n_windows) within the slice give targets
-    # [i+lookback, i+lookback+horizon) — the first target row is exactly test_start.
-    assert start + 1_440 == fold.test_start
-
-
-def test_eval_slice_bounds_rejects_fold_with_insufficient_history() -> None:
-    from src.benchmark.engine import eval_slice_bounds
-
-    fold = Fold(0, 0, 10, 10, 20, 20, 30)
-    with pytest.raises(ValueError):
-        eval_slice_bounds(fold, lookback=1_440)
+def test_random_entry_null_places_full_count_under_tight_packing() -> None:
+    # Regression for the greedy sampler that silently fell short near the packing limit,
+    # shrinking the null and biasing the p-value. Request the maximum feasible count
+    # (100 origins, horizon 10 -> 10 slots). Flat market: each draw nets exactly
+    # -(count * fee) IFF every draw placed all `count` trades, so null_std == 0 and
+    # null_mean == -(count * fee) proves the matched count on every draw.
+    count, fee = 10, 0.01
+    out = random_entry_null(
+        n_origins=100, trade_count=count, realized_final=np.zeros(100),
+        horizon=10, fee=fee, draws=200, seed=0, model_net=-0.05,
+    )
+    assert out["null_mean"] == pytest.approx(-count * fee)
+    assert out["null_std"] == pytest.approx(0.0)

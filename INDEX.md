@@ -105,6 +105,9 @@ The Training Dashboard moved to Phase 1.5. This phase builds the Trading Dashboa
 
 | Task | Files |
 |---|---|
+| Benchmark models by simulated net-of-fee PnL (app) | `DECISIONS.md` (`benchmark_*`), `src/benchmark/app.py`, `src/benchmark/engine.py` |
+| Change the benchmark trading rule or null baselines | `DECISIONS.md` (`benchmark_trading_rule`), `constants.py`, `src/benchmark/trading_sim.py` |
+| Run the predictor training bake-off (capped seeds) | `scripts/eval_predictor.py`, `src/benchmark/metrics.py` |
 | Run the permutation test (pre-live gate) | `splits-validation.md`, `scripts/permutation_test.py` |
 | Run the predictor hyperparameter/architecture search loop | `DECISIONS.md` (`search_dev_slice`), `scripts/search_predictor.py` |
 | Run the walk-forward 12×1w gate | `splits-validation.md`, `scripts/holdout_evaluator.py` |

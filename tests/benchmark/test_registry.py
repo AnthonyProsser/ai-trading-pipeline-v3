@@ -202,6 +202,18 @@ def test_list_models_compatibility_and_has_benchmark(tmp_path: Path) -> None:
     assert models[_STEM]["has_benchmark"] is True
 
 
+def test_list_models_flags_constants_mismatch(tmp_path: Path) -> None:
+    # constants_match is informational (never gates compatibility): the run tag's
+    # `c` segment is the checkpoint's constants hash; a fake stem whose c-segment is not
+    # the running constants.py's real hash must report constants_match False.
+    checkpoint_dir = tmp_path / "checkpoints"
+    benchmark_dir = checkpoint_dir / "benchmark"
+    _write_fake_checkpoint(checkpoint_dir)  # c-segment "487b9e2e" — not the live hash
+    model = list_models(checkpoint_dir, benchmark_dir)[0]
+    assert model["constants_match"] is False
+    assert model["compatible"] is True  # mismatch does NOT block benchmarking
+
+
 def test_list_models_meta_is_cached_after_first_scan(tmp_path: Path) -> None:
     checkpoint_dir = tmp_path / "checkpoints"
     benchmark_dir = checkpoint_dir / "benchmark"

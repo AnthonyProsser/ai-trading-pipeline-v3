@@ -199,6 +199,18 @@ def test_http_start_unknown_model_is_404(tmp_path: Path) -> None:
     assert client.post("/api/benchmark/nope/start").status_code == 404
 
 
+def test_http_results_unknown_stem_is_404_not_path_read(tmp_path: Path) -> None:
+    # get_result must validate the stem against known checkpoints before building a
+    # path — a bare/unknown stem (or one with traversal segments) yields 404, never a
+    # filesystem read outside benchmark_dir.
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    client = TestClient(create_app(runner))
+    assert client.get("/api/results/nope").status_code == 404
+    # No benchmark run yet, so even a KNOWN stem has no result -> 404.
+    assert client.get(f"/api/results/{_STEM}").status_code == 404
+
+
 def test_http_start_incompatible_model_is_409(tmp_path: Path) -> None:
     runner = _runner(tmp_path)
     _write_fake_checkpoint(runner.checkpoint_dir, _STEM, semantics="per_step_logret")
