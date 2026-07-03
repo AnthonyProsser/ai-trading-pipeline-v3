@@ -17,9 +17,9 @@
       <span id="status-text" class="status-text">Connecting…</span>
     </div>
     <div class="header-right">
-      <button id="btn-start" class="btn btn-start" hidden><span class="btn-label">▶ Start</span></button>
-      <button id="btn-stop" class="btn btn-stop" hidden><span class="btn-label">■ Stop</span></button>
-      <button id="btn-save" class="btn btn-save" hidden><span class="btn-label">Save checkpoint</span></button>
+      <!-- Single stateful control: Start / Stop / Saved (flash) / Done. Stopping
+           always saves the checkpoint server-side, so there is no Save button. -->
+      <button id="btn-control" class="btn btn-start" hidden><span class="btn-label">▶ Start</span></button>
     </div>
   </header>
 

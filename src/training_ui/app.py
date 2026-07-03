@@ -49,7 +49,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 STATIC_DIR = REPO_ROOT / "static" / "training_ui"
 
 CandleArrays = tuple[npt.NDArray[np.datetime64], npt.NDArray[np.float64]]
-_TERMINAL_STATES = ("idle", "stopped", "data-missing")
+# "done" = natural completion of every walk-forward fold (train_all_folds' final
+# status), distinct from a user-initiated "stopped": the run is over, so stop is
+# meaningless and a new run requires a server restart (start refuses too).
+_TERMINAL_STATES = ("idle", "stopped", "data-missing", "done")
 
 
 def _git_short_sha() -> str:
@@ -127,7 +130,7 @@ class TrainingRunner:
 
     def start(self) -> bool:
         with self._state_lock:
-            if self.state in ("data-missing",) or self.state in ("running", "saving"):
+            if self.state in ("data-missing", "done") or self.state in ("running", "saving"):
                 return False
             # Set state inside the lock so a concurrent start() call sees "running"
             # immediately, before broadcast()/thread-spawn even run.
@@ -244,6 +247,7 @@ def create_app(runner: TrainingRunner | None = None) -> FastAPI:
             "batch_trace_max_points": TRAINING_UI.BATCH_TRACE_MAX_POINTS,
             "alert_auto_dismiss_seconds": TRAINING_UI.ALERT_AUTO_DISMISS_SECONDS,
             "alert_max_stack": TRAINING_UI.ALERT_MAX_STACK,
+            "button_saved_flash_seconds": TRAINING_UI.BUTTON_SAVED_FLASH_SECONDS,
         }
 
     @app.post("/api/training/start")

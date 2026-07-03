@@ -3,6 +3,12 @@
    into a plain stylesheet — no React, no build step, no external font loads. */
 
 * { box-sizing: border-box; }
+/* The UA stylesheet's [hidden] { display: none } is overridden by ANY author display
+   rule (author origin beats user-agent origin regardless of specificity), so classes
+   like .data-gate-banner { display: flex } made the hidden attribute a no-op — the
+   "Raw data file not found" banner rendered even when the data gate passed. Restore
+   the hidden contract at author level for every element that toggles it. */
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
 body {
   background: #0d0d0d;
@@ -61,6 +67,8 @@ body {
 .btn-stop:hover:not(:disabled) { background: rgba(231, 76, 60, .14); }
 .btn-save { border: 1px solid #2c4a6b; color: #4a9eff; }
 .btn-save:hover:not(:disabled) { background: rgba(74, 158, 255, .14); }
+/* Terminal state after the whole walk-forward run completes: grayed, non-interactive. */
+.btn-done { border: 1px solid #2a2a2a; color: #666; }
 .btn-spinner {
   width: 11px; height: 11px; border: 2px solid rgba(255, 255, 255, .3);
   border-radius: 50%; animation: spin .7s linear infinite; display: inline-block;

@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-02 — Training UI: single stateful control button, terminal "done" state, hidden-attribute CSS fix
+- training_ui_controls: separate Start/Stop/Save buttons → ONE stateful control button (Start / Stop / Saved-flash / Done). New SSE status state `done`, emitted by `train_all_folds` on natural completion of all folds; `stopped` now exclusively means user-initiated stop. `TrainingRunner` treats `done` as terminal — start/stop refuse (HTTP 409), a new run requires a server restart — and the header reads `Training complete — you may now close this tab.` The manual "Save checkpoint" button is removed from the UI (saving is automatic on stop and at every fold completion); `POST /api/training/save` + `save_event` retained for scripted use only, still NaN-coverage-guarded at deploy.
+- training_ui_data_gate: wording only — "training controls (Start/Stop/Save)" → "the training control button (Start)". Gate logic unchanged.
+- New `TrainingUIConfig` constant: `BUTTON_SAVED_FLASH_SECONDS = 2.0` (cosmetic default; served via `GET /api/config`).
+- Bug fix (no decision change): `static/training_ui/style.css` author rules (`.data-gate-banner { display: flex }`, `.btn { display: inline-flex }`, `.wandb-offline { display: flex }`) override the UA stylesheet's `[hidden] { display: none }` — author origin beats user-agent origin regardless of specificity — so the "Raw data file not found" banner and all three header buttons rendered no matter what the JS set. Fixed with an author-level `[hidden] { display: none !important; }` rule. The backend gate (`setup_router.check_data_gate`) was correct and is unchanged.
+- Reason: after the first real dashboard training session, a finished run was indistinguishable from a user stop ("Stopped — checkpoint saved" with the fold counter at N/N), and the false data-gate banner claimed run controls were disabled while training demonstrably ran.
+- Source: conversation 2026-07-02 (user-reported UX issues)
+
 ## 2026-07-01 — Loss amendment: width-only coverage penalty (calibration-to-nominal)
 - loss: `pinball + λ×direction` → `pinball + λ×direction + COVERAGE_PENALTY_WEIGHT×coverage_penalty`; new decision key `loss_coverage_penalty`. New `PredictorConfig` constants: `COVERAGE_PENALTY_WEIGHT = 1.0`, `COVERAGE_PENALTY_TEMPERATURE_FRAC = 0.02`, `COVERAGE_PENALTY_STD_FLOOR = 1e-8`. `LossComponents` gains a `coverage` field; all existing consumers read fields by name.
 - Reason: the capped bake-off (`scripts/eval_predictor.py`, fold 0, 3 seeds, 20 epochs) measured under-coverage on the cumulative model — q90_coverage 0.866 vs 0.90 nominal, calibration_rate 0.747 vs 0.80, both tails too narrow. Pinball's marginal calibration pressure is ∝ the coverage gap spread over all 45 (dim × quantile) coordinates — too weak at capped budgets. The new term optimizes the two calibration deploy-gate metrics directly on the close dim and is self-limiting (gradient vanishes at nominal coverage).

@@ -260,6 +260,10 @@ class TrainingUIConfig:
     ETA_MIN_EPOCHS_FOR_ESTIMATE: int = 2  # "—" shown below this
     ETA_FOLD_DURATION_EMA_ALPHA: float = 0.3  # cosmetic default: smoothing factor
 
+    # Single stateful control button (§"Training controls"): after a user stop, the
+    # button reads "Saved" for this long before reverting to "Start". Cosmetic default.
+    BUTTON_SAVED_FLASH_SECONDS: float = 2.0
+
     # SSE transport (src/training_ui/app.py). Bounds queue.Queue.get() so a disconnected
     # client's executor thread + subscriber entry are reclaimed within this many seconds
     # instead of blocking forever — not in training-dashboard.md; a transport-layer

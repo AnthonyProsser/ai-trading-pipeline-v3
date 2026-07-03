@@ -28,6 +28,7 @@ const cfg = {
   batch_trace_max_points: 40,
   alert_auto_dismiss_seconds: 8.0,
   alert_max_stack: 3,
+  button_saved_flash_seconds: 2.0,
 };
 
 const state = {
@@ -44,6 +45,8 @@ const state = {
   prevDirection: 0,
   prevTotal: 0,
   pendingBtn: null,
+  stopping: false, // stop accepted by the server, awaiting the "stopped" status
+  savedFlash: false, // brief "Saved" on the control button right after a stop
   alertSeq: 0,
   foldRows: [], // newest first
   minValLoss: Infinity,
@@ -53,7 +56,20 @@ let chart = null;
 
 // ---- header / status ----
 function setStatus(s, text) {
+  const prev = state.scenario;
   state.scenario = s;
+  if (s === "stopped" && (prev === "running" || prev === "saving")) {
+    // A stop observed live in this tab: the server writes the checkpoint before it
+    // broadcasts "stopped", so the save is already on disk — flash "Saved" on the
+    // control button, then revert to Start. A page loaded after the fact (prev is
+    // "idle") skips the flash.
+    state.savedFlash = true;
+    setTimeout(() => {
+      state.savedFlash = false;
+      renderControlButton();
+    }, cfg.button_saved_flash_seconds * 1000);
+  }
+  if (s !== "running" && s !== "saving") state.stopping = false;
   const dot = $("status-dot");
   dot.classList.remove("pulse");
   let color = "#666";
@@ -63,12 +79,12 @@ function setStatus(s, text) {
     dot.classList.add("pulse");
   } else if (s === "saving") color = "#4a9eff";
   else if (s === "early-stopped") color = "#f39c12";
-  else if (s === "stopped") color = "#2ecc71";
+  else if (s === "stopped" || s === "done") color = "#2ecc71";
   dot.style.background = color;
   dot.style.boxShadow = `0 0 9px ${color}99`;
   if (text) $("status-text").textContent = text;
   $("data-gate-banner").hidden = s !== "data-missing";
-  updateButtons();
+  renderControlButton();
 }
 
 function defaultStatusText(s) {
@@ -77,24 +93,35 @@ function defaultStatusText(s) {
   if (s === "saving") return "Saving checkpoint…";
   if (s === "error") return "Error — see alert below";
   if (s === "stopped") return "Stopped — checkpoint saved";
+  if (s === "done") return "Training complete — you may now close this tab.";
   return "Idle — ready to start";
 }
 
-function updateButtons() {
-  const active = state.scenario === "running" || state.scenario === "saving";
-  const dataMissing = state.scenario === "data-missing";
-  const btnStart = $("btn-start");
-  const btnStop = $("btn-stop");
-  const btnSave = $("btn-save");
-  btnStart.hidden = active;
-  btnStop.hidden = !active;
-  btnSave.hidden = !active;
-  btnStart.disabled = dataMissing || state.pendingBtn === "start";
-  btnStop.disabled = state.scenario === "saving" || state.pendingBtn === "stop";
-  btnSave.disabled = state.scenario === "saving" || state.pendingBtn === "save";
-  setSpinner(btnStart, state.pendingBtn === "start", "▶ Start");
-  setSpinner(btnStop, state.pendingBtn === "stop", "■ Stop");
-  setSpinner(btnSave, state.pendingBtn === "save", "Save checkpoint");
+// One stateful control button (no separate Start/Stop/Save):
+//   idle/stopped/error → Start | running/saving → Stop (spinner while stopping)
+//   just stopped       → Saved flash            | done → grayed-out Done (terminal)
+function renderControlButton() {
+  const btn = $("btn-control");
+  btn.hidden = false;
+  btn.classList.remove("btn-start", "btn-stop", "btn-save", "btn-done");
+  if (state.scenario === "done") {
+    btn.classList.add("btn-done");
+    btn.disabled = true;
+    setSpinner(btn, false, "Done");
+  } else if (state.savedFlash) {
+    btn.classList.add("btn-save");
+    btn.disabled = true;
+    setSpinner(btn, false, "✓ Saved");
+  } else if (state.scenario === "running" || state.scenario === "saving") {
+    btn.classList.add("btn-stop");
+    const pending = state.pendingBtn === "stop" || state.stopping;
+    btn.disabled = pending;
+    setSpinner(btn, pending, "■ Stop");
+  } else {
+    btn.classList.add("btn-start");
+    btn.disabled = state.scenario === "data-missing" || state.pendingBtn === "start";
+    setSpinner(btn, state.pendingBtn === "start", "▶ Start");
+  }
 }
 
 function setSpinner(btn, pending, label) {
@@ -105,9 +132,11 @@ function setSpinner(btn, pending, label) {
 
 async function postControl(path, btnKey) {
   state.pendingBtn = btnKey;
-  updateButtons();
+  renderControlButton();
+  let ok = false;
   try {
     const res = await fetch(path, { method: "POST" });
+    ok = res.ok;
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       pushAlert({ level: "error", message: `Request failed — ${body.detail || res.status}` });
@@ -116,13 +145,23 @@ async function postControl(path, btnKey) {
     pushAlert({ level: "error", message: `Request failed — ${err.message}` });
   } finally {
     state.pendingBtn = null;
-    updateButtons();
+    renderControlButton();
   }
+  return ok;
 }
 
-$("btn-start").addEventListener("click", () => postControl("/api/training/start", "start"));
-$("btn-stop").addEventListener("click", () => postControl("/api/training/stop", "stop"));
-$("btn-save").addEventListener("click", () => postControl("/api/training/save", "save"));
+$("btn-control").addEventListener("click", async () => {
+  if (state.scenario === "running" || state.scenario === "saving") {
+    if (await postControl("/api/training/stop", "stop")) {
+      // Keep the button spinning until the "stopped" status arrives over SSE —
+      // the server saves the checkpoint between accepting the stop and that status.
+      state.stopping = true;
+      renderControlButton();
+    }
+  } else {
+    postControl("/api/training/start", "start");
+  }
+});
 $("btn-log-toggle").addEventListener("click", () => {
   const isLog = chart.toggleLogScale();
   $("btn-log-toggle").textContent = isLog ? "LOG" : "LINEAR";

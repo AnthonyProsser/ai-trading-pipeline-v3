@@ -599,7 +599,8 @@ def train_all_folds(
     warm-start across folds -- matches the existing single-fold train_predictor.py
     behavior). Emits SSE-wire-schema events (training-dashboard.md "Live metric
     stream") via `log`: "batch" per training step, "epoch" per epoch-end (with ETAs),
-    "fold_complete" + "alert" after each fold, "status" on run stop/completion.
+    "fold_complete" + "alert" after each fold, "status" on user stop ("stopped") or
+    natural completion of all folds ("done").
 
     Designed to run inside a background thread (the training UI's in-process model):
     `stop_event` is checked before each fold starts AND inside train_one_fold's batch
@@ -734,5 +735,7 @@ def train_all_folds(
             emit({"type": "status", "state": "stopped"})
             return results
 
-    emit({"type": "status", "state": "stopped"})
+    # Natural completion of every fold is "done", distinct from a user-initiated
+    # "stopped", so the UI can render a terminal state instead of an ambiguous one.
+    emit({"type": "status", "state": "done"})
     return results
