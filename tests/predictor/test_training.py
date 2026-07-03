@@ -466,7 +466,10 @@ def test_train_all_folds_walks_folds_and_emits_wire_events(tmp_path: object) -> 
     epochs = [e for e in events if e["type"] == "epoch"]
     assert epochs and all("max_epochs" in e for e in epochs)
     statuses = [e for e in events if e["type"] == "status"]
-    assert any(e["state"] == "stopped" for e in statuses)  # natural run completion
+    assert any(e["state"] == "done" for e in statuses)  # natural run completion
+    # "stopped" is reserved for a user-initiated stop; a run that finishes every fold
+    # must be distinguishable so the UI can show a terminal "Done" state.
+    assert not any(e["state"] == "stopped" for e in statuses)
 
 
 def test_window_loader_matches_dataset_windowing_and_scaling() -> None:
@@ -625,3 +628,4 @@ def test_train_all_folds_stops_early_when_stop_event_set(tmp_path: object) -> No
     assert [e["fold"] for e in completes] == [0]
     statuses = [e for e in events if e["type"] == "status"]
     assert any(e["state"] == "stopped" for e in statuses)
+    assert not any(e["state"] == "done" for e in statuses)  # user stop is never "done"

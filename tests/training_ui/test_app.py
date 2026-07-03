@@ -98,6 +98,40 @@ def test_runner_stop_and_save_rejected_when_idle(tmp_path: Path) -> None:
     assert runner.save() is False
 
 
+def test_runner_done_state_refuses_start_and_stop(tmp_path: Path) -> None:
+    """Natural run completion ("done", broadcast by train_all_folds when every fold
+    finishes) is terminal: the whole walk-forward run is over, so start and stop both
+    refuse — the UI's grayed-out "Done" button mirrors this server-side guard."""
+
+    def fake_train(r: TrainingRunner) -> None:
+        r.broadcast({"type": "status", "state": "done"})
+
+    runner = _runner(tmp_path, run_training=fake_train)
+    assert runner.start() is True
+    deadline = time.monotonic() + 2
+    while runner.state != "done" and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert runner.state == "done"
+    assert runner.start() is False
+    assert runner.stop() is False
+
+
+def test_http_start_and_stop_return_409_when_done(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    def fake_train(r: TrainingRunner) -> None:
+        r.broadcast({"type": "status", "state": "done"})
+
+    runner = _runner(tmp_path, run_training=fake_train)
+    client = TestClient(create_app(runner=runner))
+    assert client.post("/api/training/start").status_code == 200
+    deadline = time.monotonic() + 2
+    while runner.state != "done" and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert client.post("/api/training/start").status_code == 409
+    assert client.post("/api/training/stop").status_code == 409
+
+
 def test_runner_broadcast_fans_out_to_all_subscribers(tmp_path: Path) -> None:
     runner = _runner(tmp_path)
     q1 = runner.subscribe()
@@ -158,6 +192,7 @@ def test_http_config_exposes_thresholds_from_constants(tmp_path: Path) -> None:
     assert body["batch_trace_max_points"] == TRAINING_UI.BATCH_TRACE_MAX_POINTS
     assert body["alert_auto_dismiss_seconds"] == TRAINING_UI.ALERT_AUTO_DISMISS_SECONDS
     assert body["alert_max_stack"] == TRAINING_UI.ALERT_MAX_STACK
+    assert body["button_saved_flash_seconds"] == TRAINING_UI.BUTTON_SAVED_FLASH_SECONDS
 
 
 def test_http_history_reads_exporter_records(tmp_path: Path) -> None:
