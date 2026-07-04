@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import queue
 import threading
 from collections.abc import AsyncIterator, Callable
@@ -27,10 +28,12 @@ from src.benchmark.engine import run_benchmark_job
 from src.benchmark.registry import (
     json_safe,
     list_models,
+    parse_run_tag,
     read_benchmark_result,
     scan_checkpoints,
     set_display_name,
 )
+from src.training_ui.exporter import read_fold_records
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 STATIC_DIR = REPO_ROOT / "static" / "benchmark"
@@ -49,9 +52,13 @@ class BenchmarkRunner:
         checkpoint_dir: Path,
         benchmark_dir: Path,
         run_benchmark: Callable[[BenchmarkRunner, str], None],
+        training_metrics_dir: Path | None = None,
     ) -> None:
         self.checkpoint_dir = checkpoint_dir
         self.benchmark_dir = benchmark_dir
+        # Where training_metrics.json lives (the real CHECKPOINT_DIR, not the finished
+        # dir checkpoint_dir now points at) — the analysis endpoint joins from here.
+        self.training_metrics_dir = training_metrics_dir
         self._run_benchmark = run_benchmark
         self.state: str = "idle"
         self.current_stem: str | None = None
@@ -111,10 +118,14 @@ class BenchmarkRunner:
 
 
 def create_runner() -> BenchmarkRunner:
+    # The benchmark reads only FINISHED models — a full training run promotes its
+    # checkpoints into FINISHED_DIR (scratch/manual/search checkpoints in CHECKPOINT_DIR
+    # never appear). training_metrics.json stays in CHECKPOINT_DIR (the analysis join).
     return BenchmarkRunner(
-        checkpoint_dir=REPO_ROOT / PREDICTOR.CHECKPOINT_DIR,
+        checkpoint_dir=REPO_ROOT / PREDICTOR.FINISHED_DIR,
         benchmark_dir=REPO_ROOT / BENCHMARK.BENCHMARK_DIR,
         run_benchmark=run_benchmark_job,
+        training_metrics_dir=REPO_ROOT / PREDICTOR.CHECKPOINT_DIR,
     )
 
 
@@ -188,13 +199,27 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
                 }
             )
 
-        def net_of(row: dict[str, object]) -> float:
-            trading = row["trading"]
-            assert isinstance(trading, dict)
-            net = trading.get("net_return")
-            return float(net) if isinstance(net, (int, float)) else float("-inf")
+        def _num(row: dict[str, object], group: str, key: str) -> float | None:
+            block = row.get(group)
+            v = block.get(key) if isinstance(block, dict) else None
+            return float(v) if isinstance(v, (int, float)) and math.isfinite(v) else None
 
-        rows.sort(key=net_of, reverse=True)
+        def net_of(row: dict[str, object]) -> float | None:
+            return _num(row, "trading", "net_return")
+
+        # The model forecasts price, so the board ranks by forecast ACCURACY on the
+        # out-of-sample fold-test slice: directional accuracy desc, tie-broken by pinball
+        # (the quantile scoring rule) asc. Both are trade-count-independent, so a model no
+        # longer climbs merely by trading less. Missing values sort last either way.
+        def rank_key(row: dict[str, object]) -> tuple[float, float]:
+            da = _num(row, "statistical", "directional_accuracy")
+            pinball = _num(row, "statistical", "pinball")
+            return (
+                -da if da is not None else float("inf"),
+                pinball if pinball is not None else float("inf"),
+            )
+
+        rows.sort(key=rank_key)
         for rank, row in enumerate(rows, start=1):
             row["rank"] = rank
 
@@ -203,18 +228,21 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
             groups.setdefault((row["git_sha"], row["constants_sha8"]), []).append(row)
         run_rows: list[dict[str, object]] = []
         for (git_sha, constants_sha8), members in groups.items():
-            nets = [net_of(r) for r in members if net_of(r) != float("-inf")]
+            das = [d for d in (_num(r, "statistical", "directional_accuracy")
+                               for r in members) if d is not None]
+            nets = [v for v in (net_of(r) for r in members) if v is not None]
             run_rows.append(
                 {
                     "git_sha": git_sha,
                     "constants_sha8": constants_sha8,
                     "n_models": len(members),
+                    "mean_da": sum(das) / len(das) if das else None,
                     "mean_net_return": sum(nets) / len(nets) if nets else None,
                 }
             )
         run_rows.sort(
-            key=lambda g: g["mean_net_return"]
-            if isinstance(g["mean_net_return"], float) else float("-inf"),
+            key=lambda g: g["mean_da"]
+            if isinstance(g["mean_da"], float) else float("-inf"),
             reverse=True,
         )
 
@@ -232,6 +260,8 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
             "target_semantics": PREDICTOR.TARGET_SEMANTICS,
             "quantiles": list(PREDICTOR.QUANTILES),
             "null_draws": BENCHMARK.NULL_DRAWS,
+            "null_significance_level": BENCHMARK.NULL_SIGNIFICANCE_LEVEL,
+            "alert_auto_dismiss_seconds": TRAINING_UI.ALERT_AUTO_DISMISS_SECONDS,
             "deploy_gate_da_threshold": PREDICTOR.DEPLOY_GATE_DA_THRESHOLD,
             "deploy_gate_cal_lower": PREDICTOR.DEPLOY_GATE_CAL_LOWER,
             "deploy_gate_cal_upper": PREDICTOR.DEPLOY_GATE_CAL_UPPER,
@@ -249,6 +279,42 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
         if result is None:
             raise HTTPException(status_code=404, detail=f"no benchmark result for {stem!r}")
         return result
+
+    @app.get("/api/analysis/{stem}")
+    def get_analysis(stem: str) -> dict[str, object]:
+        """One JSON joining a model's benchmark result with the training fold record that
+        produced this exact checkpoint (matched on the run-tag stem) — so an AI can read
+        the trading/statistical outcome and the training-session context together and
+        hypothesize why it scored as it did. `training` is null for a model whose
+        training record predates the stem join key (or was trained outside this UI)."""
+        known = {str(e["stem"]) for e in scan_checkpoints(runner.checkpoint_dir)}
+        if stem not in known:
+            raise HTTPException(status_code=404, detail=f"unknown model {stem!r}")
+        result = read_benchmark_result(runner.benchmark_dir, stem)
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"no benchmark result for {stem!r}")
+        training: dict[str, object] | None = None
+        if runner.training_metrics_dir is not None:
+            for record in read_fold_records(runner.training_metrics_dir):
+                if record.get("stem") == stem:
+                    training = dict(record)
+                    break
+        tag = parse_run_tag(stem)
+        payload: dict[str, object] = {
+            "stem": stem,
+            "provenance": {
+                "fold_index": tag.fold_index if tag is not None else None,
+                "git_sha": tag.git_sha if tag is not None else None,
+                "constants_sha8": tag.constants_sha8 if tag is not None else None,
+                "trained_through_ts_utc": result.get("trained_through_ts_utc"),
+                "lookback": result.get("lookback"),
+            },
+            "benchmark": result,
+            "training": training,
+        }
+        safe = json_safe(payload)
+        assert isinstance(safe, dict)
+        return safe
 
     @app.get("/api/events")
     async def events(request: Request) -> StreamingResponse:

@@ -20,6 +20,7 @@ import copy
 import hashlib
 import math
 import pickle
+import shutil
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -594,6 +595,7 @@ def train_all_folds(
     log: LogFn | None = None,
     stop_event: threading.Event | None = None,
     save_event: threading.Event | None = None,
+    finished_dir: Path | None = None,
 ) -> list[FoldMetrics]:
     """Walk-forward driver: trains `folds` in order, one fresh PatchTST per fold (no
     warm-start across folds -- matches the existing single-fold train_predictor.py
@@ -608,10 +610,20 @@ def train_all_folds(
     A checkpoint is always written for a fold that produced any weights, including one
     interrupted by stop_event, matching the "stop = graceful checkpoint save" spec.
 
+    Terminal status: a run that reaches its natural end emits `state:"completed"`; a run
+    ended by stop_event/stopped_by_user emits `state:"stopped"`. Only on natural
+    completion — and only when `finished_dir` is given — is each fold's gate-evaluated
+    checkpoint (weights + scaler) COPIED into `finished_dir` (the `promoted` count rides
+    the completed status). This is what the benchmark app reads, so a run cut short never
+    promotes a partial set.
+
     Returns the FoldMetrics for every fold that actually ran (empty if stopped before
     the first fold started).
     """
     results: list[FoldMetrics] = []
+    # (weights, scaler) of each fold's gate-evaluated checkpoint, promoted to
+    # finished_dir only if the whole run reaches its natural end (see the loop tail).
+    finished_pairs: list[tuple[Path, Path]] = []
     total_folds = len(folds)
     # Exponential moving average of completed-fold durations (training-dashboard.md
     # §"F — ETA strip": "TOTAL ETA uses exponential smoothing over recent fold
@@ -697,12 +709,13 @@ def train_all_folds(
 
         q_cov = evaluate_q90_coverage(model, val_loader, device=device)
         da = evaluate_directional_accuracy(model, val_loader, device=device)
-        weights_path, _ = save_checkpoint(
+        weights_path, scaler_path = save_checkpoint(
             model, scaler, checkpoint_dir, run_tag,
             lookback=lookback, constants_sha256=constants_sha,
             trained_through_ts_utc=_trained_through_ts_utc(timestamps, fold),
             train_q90_coverage=q_cov,
         )
+        finished_pairs.append((weights_path, scaler_path))
         duration_s = time.monotonic() - fold_start
         alpha = TRAINING_UI.ETA_FOLD_DURATION_EMA_ALPHA
         fold_duration_ema = (
@@ -722,6 +735,7 @@ def train_all_folds(
         emit({
             "type": "fold_complete",
             "fold": fold.index,
+            "stem": run_tag,
             "train_loss": metrics.train_total,
             "val_loss": metrics.val_total,
             "da": da,
@@ -734,5 +748,29 @@ def train_all_folds(
             emit({"type": "status", "state": "stopped"})
             return results
 
-    emit({"type": "status", "state": "stopped"})
+    # Natural completion (every fold reached its end, no stop): promote this run's
+    # gate-evaluated checkpoints into finished_dir so the benchmark app can see them.
+    # Copy (not move) — CHECKPOINT_DIR stays the source of truth deploy/manifest read.
+    promoted = 0
+    if finished_dir is not None:
+        finished_dir.mkdir(parents=True, exist_ok=True)
+        for weights_path, scaler_path in finished_pairs:
+            # A copy failure (disk full, or a Windows AV lock on the fresh .pt) must not
+            # sink the whole run: training itself succeeded, so warn with the accurate
+            # partial count and still settle the state machine on "completed" below,
+            # rather than letting the exception surface as a bare idle+alert.
+            try:
+                shutil.copy2(weights_path, finished_dir / weights_path.name)
+                shutil.copy2(scaler_path, finished_dir / scaler_path.name)
+            except OSError as exc:
+                emit({
+                    "type": "alert", "level": "warn",
+                    "message": (
+                        f"Promotion incomplete — copied {promoted}/{len(finished_pairs)} "
+                        f"finished models before failing on {weights_path.name}: {exc}"
+                    ),
+                })
+                break
+            promoted += 1
+    emit({"type": "status", "state": "completed", "promoted": promoted})
     return results

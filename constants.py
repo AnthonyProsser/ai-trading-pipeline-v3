@@ -179,6 +179,11 @@ class PredictorConfig:
     CHECKPOINT_DIR: str = "checkpoints"
     CHECKPOINT_WEIGHTS_SUFFIX: str = ".pt"
     CHECKPOINT_SCALER_SUFFIX: str = ".scaler.pkl"
+    # Models that FINISHED training (a full walk-forward run that reached its natural
+    # end, no user stop) are copied here; the benchmark app reads only this directory,
+    # so scratch/manual/search checkpoints in CHECKPOINT_DIR never reach the leaderboard.
+    # Flagged unspecced: name is a chosen default (DECISIONS.md benchmark_finished_models_source).
+    FINISHED_DIR: str = "checkpoints/finished"
 
     # Training UI fold-history export (training-dashboard.md §"Fold history export").
     # Written under CHECKPOINT_DIR; the handoff artifact for post-training analysis.
@@ -293,6 +298,12 @@ class BenchmarkConfig:
     NULL_DRAWS: int = 200
     # Fixed seed so a cached benchmark JSON is reproducible bit-for-bit on re-run.
     NULL_SEED: int = 0
+    # Display-only: p-values below this get the "significant" emphasis in the leaderboard.
+    # Mirrors the pre-live permutation gate's p < 0.05 (DECISIONS.md Pre-live gate). Kept
+    # here (not shared with the not-yet-built scripts/permutation_test.py) so the JS client
+    # reads it from /api/config instead of hardcoding a copy; revisit the home if that
+    # script later needs the identical threshold.
+    NULL_SIGNIFICANCE_LEVEL: float = 0.05
 
 
 # ============================================================

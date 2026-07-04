@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from constants import PREDICTOR
 
@@ -26,6 +26,9 @@ class HyperparamsSnapshot(TypedDict):
 
 class FoldRecord(TypedDict):
     fold: int
+    # run-tag join key the benchmark analysis endpoint pairs results on. NotRequired so
+    # records written before this field existed still validate (they simply don't join).
+    stem: NotRequired[str]
     train_loss: float
     val_loss: float
     da: float

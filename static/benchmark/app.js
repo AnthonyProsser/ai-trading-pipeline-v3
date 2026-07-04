@@ -25,6 +25,11 @@ function fmtRatio(v) {
   return Number(v).toFixed(2);
 }
 
+function fmtHitPct(v) {
+  if (v === null || v === undefined) return "—";
+  return `${(v * 100).toFixed(0)}%`;
+}
+
 function signClass(v) {
   if (v === null || v === undefined) return "dim";
   return v > 0 ? "pos" : v < 0 ? "neg" : "dim";
@@ -50,7 +55,7 @@ function alertBox(message, level) {
   box.className = `alert ${level || ""}`;
   box.textContent = message;
   $("alerts").appendChild(box);
-  setTimeout(() => box.remove(), 8000);
+  setTimeout(() => box.remove(), CONFIG.alert_auto_dismiss_seconds * 1000);
 }
 
 /* ---------------------------------------------------------------- config + rule */
@@ -166,9 +171,9 @@ function renderModels(models) {
 
 function pCell(p) {
   if (p === null || p === undefined) return td("—", "num dim");
-  // 0.05 mirrors the pre-live permutation gate's significance level; it is display
-  // emphasis only — the number itself is always shown.
-  const cls = p < 0.05 ? "sig" : "insig";
+  // CONFIG.null_significance_level mirrors the pre-live permutation gate's significance
+  // level; it is display emphasis only — the number itself is always shown.
+  const cls = p < CONFIG.null_significance_level ? "sig" : "insig";
   return td(fmtNum(p, 3), `num ${cls}`);
 }
 
@@ -201,6 +206,10 @@ function renderLeaderboard(payload) {
     );
     row.appendChild(name);
     row.appendChild(td(r.fold_index === null ? "—" : String(r.fold_index), "num"));
+    // Accuracy leads — it is the rank basis (DA desc, pinball asc tie-break).
+    row.appendChild(daCell(s.directional_accuracy));
+    row.appendChild(calCell(s.calibration_rate));
+    row.appendChild(td(fmtNum(s.pinball, 4), "num"));
     row.appendChild(td(fmtPct(t.net_return), `num ${signClass(t.net_return)}`));
     const vsBh = t.net_return !== null && t.net_return !== undefined &&
       b.buy_and_hold_net !== null && b.buy_and_hold_net !== undefined
@@ -210,12 +219,11 @@ function renderLeaderboard(payload) {
     row.appendChild(td(fmtNum(t.sharpe), `num ${signClass(t.sharpe)}`));
     row.appendChild(td(fmtPct(t.max_drawdown !== undefined ? -t.max_drawdown : null), "num neg"));
     row.appendChild(td(t.trade_count === undefined ? "—" : String(t.trade_count), "num"));
-    row.appendChild(td(t.hit_rate === null || t.hit_rate === undefined
-      ? "—" : `${(t.hit_rate * 100).toFixed(0)}%`, "num"));
+    // Hit = directional (right side, ~50% expected); Net win = profitable after fee.
+    row.appendChild(td(fmtHitPct(t.directional_hit_rate), "num"));
+    row.appendChild(td(fmtHitPct(t.hit_rate), "num"));
     row.appendChild(td(fmtRatio(e.mean_captured_fraction), "num"));
     row.appendChild(td(fmtRatio(e.mean_adverse_ratio), "num"));
-    row.appendChild(daCell(s.directional_accuracy));
-    row.appendChild(calCell(s.calibration_rate));
     body.appendChild(row);
   }
 
@@ -226,7 +234,8 @@ function renderLeaderboard(payload) {
     card.className = "run-card";
     card.innerHTML =
       `run <b>${esc(g.git_sha)}</b> · constants <b>${esc(g.constants_sha8)}</b> · ` +
-      `${g.n_models} model${g.n_models === 1 ? "" : "s"} · mean net ` +
+      `${g.n_models} model${g.n_models === 1 ? "" : "s"} · mean DA ` +
+      `<b>${fmtNum(g.mean_da, 3)}</b> · mean net ` +
       `<b class="${signClass(g.mean_net_return)}">${fmtPct(g.mean_net_return)}</b>`;
     runs.appendChild(card);
   }

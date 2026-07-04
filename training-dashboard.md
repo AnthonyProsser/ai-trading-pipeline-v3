@@ -306,16 +306,24 @@ The server exposes a single SSE endpoint (`GET /api/events`) or WebSocket (`WS /
   "patience": 2, "epoch_eta_s": 271, "fold_eta_s": 12130, "total_eta_s": 827640,
   "best_val_total": 0.5880 }
 
-{ "type": "fold_complete", "fold": 3, "train_loss": 0.6024, "val_loss": 0.5940,
+{ "type": "fold_complete", "fold": 3, "stem": "abc1234-s9f3a2b1-c7e4d3f2-fold3",
+  "train_loss": 0.6024, "val_loss": 0.5940,
   "da": 0.543, "q_coverage": 0.9880, "duration_s": 12240,
   "checkpoint_path": "checkpoints/abc1234-s9f3a2b1-c7e4d3f2-fold3.pt" }
 
 { "type": "alert", "level": "error", "message": "subprocess exited with code 1" }
 
-{ "type": "status", "state": "running|idle|stopped|saving|error",
+{ "type": "status", "state": "running|idle|stopped|completed|saving|error",
+  "promoted": 4,
   "wandb_mode": "online|offline|disabled",
   "wandb_run_id": "abc1234-s9f3a2b1-c7e4d3f2-fold3" }
 ```
+
+The `stem` on `fold_complete` is the run-tag join key the benchmark analysis endpoint
+pairs a benchmark result with the training record on. `state:"completed"` is emitted on a
+run that reaches its natural end (all folds, no user stop); its `promoted` count is how
+many finished checkpoints were copied into `PredictorConfig.FINISHED_DIR` for the
+benchmark app. A run ended by Stop emits `state:"stopped"` and promotes nothing.
 
 The JS client subscribes on page load and routes each message type to the appropriate panel update function. The chart, gauges, ETA strip, patience bar, W&B panel, and alert banners are all driven by this stream. There is no polling.
 

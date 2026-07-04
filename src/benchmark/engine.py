@@ -214,7 +214,7 @@ def run_benchmark_job(runner: RunnerLike, stem: str) -> None:
     ledger = simulate_trades(
         signals, realized_final, horizon=PREDICTOR.HORIZON, fee=EXECUTION.FEE_THRESHOLD
     )
-    trading = ledger_stats(ledger.net_returns)
+    trading = ledger_stats(ledger.net_returns, ledger.gross_returns)
     trading["signal_count"] = int(np.count_nonzero(signals))
 
     test_total_logret = float(

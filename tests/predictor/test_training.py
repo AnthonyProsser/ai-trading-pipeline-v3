@@ -460,13 +460,17 @@ def test_train_all_folds_walks_folds_and_emits_wire_events(tmp_path: object) -> 
     for e in completes:
         assert Path(str(e["checkpoint_path"])).exists()
         assert np.isfinite(e["q_coverage"])  # type: ignore[arg-type]
+        # fold_complete carries the run-tag stem so a benchmark result can later be
+        # joined back to this fold's training record (analysis endpoint).
+        assert str(e["stem"]).startswith("abc1234-")
+        assert str(e["stem"]).endswith(f"-fold{e['fold']}")
 
     batches = [e for e in events if e["type"] == "batch"]
     assert batches and all(e["fold"] in (0, 1) for e in batches)
     epochs = [e for e in events if e["type"] == "epoch"]
     assert epochs and all("max_epochs" in e for e in epochs)
     statuses = [e for e in events if e["type"] == "status"]
-    assert any(e["state"] == "stopped" for e in statuses)  # natural run completion
+    assert any(e["state"] == "completed" for e in statuses)  # natural run completion
 
 
 def test_window_loader_matches_dataset_windowing_and_scaling() -> None:
@@ -625,3 +629,107 @@ def test_train_all_folds_stops_early_when_stop_event_set(tmp_path: object) -> No
     assert [e["fold"] for e in completes] == [0]
     statuses = [e for e in events if e["type"] == "status"]
     assert any(e["state"] == "stopped" for e in statuses)
+
+
+def test_train_all_folds_promotes_finished_checkpoints_on_completion(
+    tmp_path: object,
+) -> None:
+    """A full run (all folds to natural end) copies every fold's gate-evaluated
+    checkpoint + scaler into finished_dir and emits a terminal state:'completed'."""
+    pytest.importorskip("torch")
+    from pathlib import Path
+
+    from src.data.walk_forward import Fold
+    from src.predictor.training import train_all_folds
+
+    feats, ts = _synthetic(500)
+    folds = [
+        Fold(0, 0, 150, 150, 250, 250, 300),
+        Fold(1, 150, 300, 300, 400, 400, 500),
+    ]
+    ckpt_dir = Path(str(tmp_path)) / "checkpoints"
+    finished_dir = Path(str(tmp_path)) / "finished"
+    events: list[dict[str, object]] = []
+
+    train_all_folds(
+        feats, ts, folds, lookback=_LOOKBACK, device="cpu", batch_size=16, max_epochs=1,
+        checkpoint_dir=ckpt_dir, git_sha="abc1234", constants_sha="deadbeef",
+        log=events.append, finished_dir=finished_dir,
+    )
+
+    assert len(list(finished_dir.glob(f"*{PREDICTOR.CHECKPOINT_WEIGHTS_SUFFIX}"))) == 2
+    assert len(list(finished_dir.glob(f"*{PREDICTOR.CHECKPOINT_SCALER_SUFFIX}"))) == 2
+    completed = [e for e in events if e.get("state") == "completed"]
+    assert completed and completed[-1]["promoted"] == 2
+
+
+def test_train_all_folds_does_not_promote_on_user_stop(tmp_path: object) -> None:
+    """A run stopped before natural completion promotes nothing — the finished dir is
+    for models that actually finished training."""
+    pytest.importorskip("torch")
+    import threading
+    from pathlib import Path
+
+    from src.data.walk_forward import Fold
+    from src.predictor.training import train_all_folds
+
+    feats, ts = _synthetic(500)
+    folds = [
+        Fold(0, 0, 150, 150, 250, 250, 300),
+        Fold(1, 150, 300, 300, 400, 400, 500),
+    ]
+    ckpt_dir = Path(str(tmp_path)) / "checkpoints"
+    finished_dir = Path(str(tmp_path)) / "finished"
+    stop_event = threading.Event()
+    events: list[dict[str, object]] = []
+
+    def log(payload: dict[str, object]) -> None:
+        events.append(payload)
+        if payload["type"] == "fold_complete":
+            stop_event.set()  # stop after fold 0 -> fold 1 never starts
+
+    train_all_folds(
+        feats, ts, folds, lookback=_LOOKBACK, device="cpu", batch_size=16, max_epochs=1,
+        checkpoint_dir=ckpt_dir, git_sha="abc1234", constants_sha="deadbeef",
+        log=log, stop_event=stop_event, finished_dir=finished_dir,
+    )
+
+    assert not finished_dir.exists() or not list(finished_dir.iterdir())
+    assert not any(e.get("state") == "completed" for e in events)
+    assert any(e.get("state") == "stopped" for e in events)
+
+
+def test_train_all_folds_partial_promotion_warns_but_still_completes(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A copy failure during promotion (e.g. a Windows AV lock) must not sink the run:
+    it warns with the accurate partial count and still emits the terminal completed
+    state, rather than surfacing as a bare exception."""
+    pytest.importorskip("torch")
+    from pathlib import Path
+
+    import src.predictor.training as training_mod
+    from src.data.walk_forward import Fold
+
+    feats, ts = _synthetic(500)
+    folds = [Fold(0, 0, 150, 150, 250, 250, 300)]
+    finished_dir = Path(str(tmp_path)) / "finished"
+    events: list[dict[str, object]] = []
+
+    def boom(src: object, dst: object) -> None:
+        raise OSError("checkpoint locked by another process")
+
+    monkeypatch.setattr(training_mod.shutil, "copy2", boom)
+    training_mod.train_all_folds(
+        feats, ts, folds, lookback=_LOOKBACK, device="cpu", batch_size=16, max_epochs=1,
+        checkpoint_dir=Path(str(tmp_path)) / "checkpoints", git_sha="abc1234",
+        constants_sha="deadbeef", log=events.append, finished_dir=finished_dir,
+    )
+
+    assert any(
+        e.get("type") == "alert" and e.get("level") == "warn"
+        and "Promotion incomplete" in str(e.get("message"))
+        for e in events
+    )
+    completed = [e for e in events if e.get("state") == "completed"]
+    assert completed and completed[-1]["promoted"] == 0

@@ -87,6 +87,16 @@ def test_simulate_trades_short_direction() -> None:
     assert ledger.net_returns.tolist() == pytest.approx([0.04])
 
 
+def test_simulate_trades_records_gross_returns_pre_fee() -> None:
+    # gross = direction * realised move, BEFORE the fee (net = gross - fee). The gross
+    # path is what the directional hit rate is read from, so it must be exposed.
+    directions = np.array([1, 1, 0, 1], dtype=np.int8)
+    realized_final = np.array([0.05, 0.99, 0.0, 0.03])  # index 1 skipped (in-position)
+    ledger = simulate_trades(directions, realized_final, horizon=2, fee=0.01)
+    assert ledger.gross_returns.tolist() == pytest.approx([0.05, 0.03])
+    assert ledger.net_returns.tolist() == pytest.approx([0.04, 0.02])
+
+
 def test_simulate_trades_no_signals_yields_empty_ledger() -> None:
     ledger = simulate_trades(
         np.zeros(5, dtype=np.int8), np.zeros(5), horizon=2, fee=0.01
@@ -127,6 +137,25 @@ def test_ledger_stats_empty_ledger() -> None:
 def test_ledger_stats_single_trade_has_nan_sharpe() -> None:
     # One trade has no return dispersion; a 0/0 sharpe must be NaN, not raise.
     assert math.isnan(ledger_stats(np.array([0.02]))["sharpe"])
+
+
+def test_ledger_stats_directional_hit_rate_is_pre_fee() -> None:
+    # Directional hit = the trade was on the right SIDE (gross > 0), independent of
+    # whether it cleared the fee. Here both trades are directionally correct (gross > 0)
+    # but the first is sub-fee so it nets a loss: directional hit rate 1.0, net win
+    # rate 0.5. This is the fix for the "<5% hit rate" confusion — 'hit_rate' was
+    # silently the net-of-fee win rate.
+    nets = np.array([-0.004, 0.02])
+    gross = np.array([0.006, 0.03])
+    stats = ledger_stats(nets, gross)
+    assert stats["directional_hit_rate"] == pytest.approx(1.0)
+    assert stats["hit_rate"] == pytest.approx(0.5)  # net-of-fee win rate unchanged
+
+
+def test_ledger_stats_directional_hit_rate_nan_without_gross() -> None:
+    # gross omitted (or empty ledger) -> directional hit rate is undefined, not 0.
+    assert math.isnan(ledger_stats(np.array([0.02]))["directional_hit_rate"])
+    assert math.isnan(ledger_stats(np.array([]), np.array([]))["directional_hit_rate"])
 
 
 # --- null baselines -----------------------------------------------------------

@@ -46,11 +46,17 @@ SignalArray = npt.NDArray[np.int8]
 
 
 class TradeLedger(NamedTuple):
-    """Executed trades: entry origin indices, directions (+1/-1), net log-returns."""
+    """Executed trades: entry origin indices, directions (+1/-1), and returns.
+
+    ``gross_returns`` is the pre-fee outcome (direction x realised move); ``net_returns``
+    subtracts one round-trip fee. The two split the "was the trade on the right side"
+    question (gross > 0) from the "did it also clear the fee" question (net > 0).
+    """
 
     entries: npt.NDArray[np.int64]
     directions: SignalArray
     net_returns: FloatArray
+    gross_returns: FloatArray
 
 
 def extract_signals(
@@ -91,6 +97,7 @@ def simulate_trades(
     entries: list[int] = []
     dirs: list[int] = []
     nets: list[float] = []
+    grosses: list[float] = []
     i = 0
     n = int(directions.shape[0])
     while i < n:
@@ -98,31 +105,46 @@ def simulate_trades(
         if d == 0:
             i += 1
             continue
+        gross = d * float(realized_final[i])
         entries.append(i)
         dirs.append(d)
-        nets.append(d * float(realized_final[i]) - fee)
+        grosses.append(gross)
+        nets.append(gross - fee)
         i += horizon
     return TradeLedger(
         np.asarray(entries, dtype=np.int64),
         np.asarray(dirs, dtype=np.int8),
         np.asarray(nets, dtype=np.float64),
+        np.asarray(grosses, dtype=np.float64),
     )
 
 
-def ledger_stats(net_returns: FloatArray) -> dict[str, float]:
-    """Net return, per-trade Sharpe, max drawdown, trade count, hit rate.
+def ledger_stats(
+    net_returns: FloatArray, gross_returns: FloatArray | None = None
+) -> dict[str, float]:
+    """Net return, per-trade Sharpe, max drawdown, trade count, and two hit rates.
 
-    All in net-of-fee log-return units. Sharpe is per-trade (mean/sample-std of trade
+    All in net-of-fee log-return units. ``hit_rate`` is the NET win rate (share of
+    trades profitable AFTER the round-trip fee). ``directional_hit_rate`` is the gross
+    win rate from ``gross_returns`` (share of trades on the right SIDE, pre-fee, ~0.5
+    expected) — the number a reader intuitively means by "hit rate"; NaN when
+    ``gross_returns`` is absent/empty. Sharpe is per-trade (mean/sample-std of trade
     returns, no annualization — trade spacing is signal-dependent, so a time
     annualization would fabricate precision). NaN where undefined (no trades, or a
     single trade with no return dispersion). Max drawdown is peak-to-trough of the
     cumulative equity curve, measured from a starting equity of 0.
     """
+    directional_hit_rate = (
+        float(np.mean(gross_returns > 0.0))
+        if gross_returns is not None and gross_returns.size > 0
+        else float("nan")
+    )
     n = int(net_returns.size)
     if n == 0:
         return {
             "net_return": 0.0, "sharpe": float("nan"), "max_drawdown": 0.0,
             "trade_count": 0, "hit_rate": float("nan"),
+            "directional_hit_rate": directional_hit_rate,
         }
     equity = np.cumsum(net_returns)
     peaks = np.maximum.accumulate(np.concatenate([[0.0], equity]))[1:]
@@ -138,6 +160,7 @@ def ledger_stats(net_returns: FloatArray) -> dict[str, float]:
         "max_drawdown": max_drawdown,
         "trade_count": n,
         "hit_rate": float(np.mean(net_returns > 0.0)),
+        "directional_hit_rate": directional_hit_rate,
     }
 
 

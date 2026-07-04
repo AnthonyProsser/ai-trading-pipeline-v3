@@ -63,7 +63,7 @@ function setStatus(s, text) {
     dot.classList.add("pulse");
   } else if (s === "saving") color = "#4a9eff";
   else if (s === "early-stopped") color = "#f39c12";
-  else if (s === "stopped") color = "#2ecc71";
+  else if (s === "stopped" || s === "completed") color = "#2ecc71";
   dot.style.background = color;
   dot.style.boxShadow = `0 0 9px ${color}99`;
   if (text) $("status-text").textContent = text;
@@ -77,6 +77,7 @@ function defaultStatusText(s) {
   if (s === "saving") return "Saving checkpoint…";
   if (s === "error") return "Error — see alert below";
   if (s === "stopped") return "Stopped — checkpoint saved";
+  if (s === "completed") return "Completed — models promoted to benchmark";
   return "Idle — ready to start";
 }
 
@@ -354,10 +355,14 @@ function pushAlert({ level, message }) {
 // ---- SSE message routing ----
 function handleMessage(payload) {
   switch (payload.type) {
-    case "status":
+    case "status": {
       if (typeof payload.wandb_mode === "string") renderWandb(payload.wandb_mode, payload.wandb_run_id);
-      setStatus(payload.state, defaultStatusText(payload.state));
+      const text = payload.state === "completed" && typeof payload.promoted === "number"
+        ? `Completed — ${payload.promoted} model${payload.promoted === 1 ? "" : "s"} promoted to benchmark`
+        : defaultStatusText(payload.state);
+      setStatus(payload.state, text);
       break;
+    }
     case "batch":
       if (typeof payload.total_folds === "number") state.totalFolds = payload.total_folds;
       state.curFold = payload.fold;

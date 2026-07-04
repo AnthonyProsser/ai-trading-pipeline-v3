@@ -37,9 +37,10 @@
     <section class="panel">
       <div class="panel-title">
         <h2>Leaderboard</h2>
-        <span class="panel-sub">ranked by simulated net-of-fee PnL on each model's own
-          out-of-sample fold-test slice · p(null) = probability random entries at matched
-          frequency do at least this well</span>
+        <span class="panel-sub">ranked by directional accuracy on each model's own
+          out-of-sample fold-test slice (tie-break: pinball loss) — the model forecasts
+          price, so accuracy is the rank basis; net PnL / p(null) show tradeability, not
+          rank</span>
       </div>
       <div class="table-scroll">
         <table id="leaderboard-table">
@@ -48,17 +49,19 @@
               <th class="num">#</th>
               <th>Model</th>
               <th class="num">Fold</th>
+              <th class="num" title="Directional accuracy on the out-of-sample fold-test slice — the rank basis">DA</th>
+              <th class="num" title="[q10,q90] calibration — gate band from config">Cal.</th>
+              <th class="num" title="Pinball (quantile) loss — the accuracy tie-breaker; lower is better">Pinball</th>
               <th class="num" title="Sum of per-trade net log-returns, shown as %">Net</th>
               <th class="num" title="vs buy-and-hold over the same slice">vs B&H</th>
               <th class="num" title="Random-entry null at matched trade frequency">p(null)</th>
               <th class="num" title="Per-trade Sharpe (no annualization)">Sharpe</th>
               <th class="num">Max DD</th>
               <th class="num">Trades</th>
-              <th class="num">Hit</th>
+              <th class="num" title="Directional hit rate — share of trades on the right side, pre-fee (~50% expected)">Hit</th>
+              <th class="num" title="Net win rate — share of trades profitable after the round-trip fee">Net win</th>
               <th class="num" title="Mean fraction of the predicted move captured">Capt.</th>
               <th class="num" title="Mean adverse excursion / predicted magnitude">Adv.</th>
-              <th class="num" title="Directional accuracy (fee-filtered)">DA</th>
-              <th class="num" title="[q10,q90] calibration — gate band from config">Cal.</th>
             </tr>
           </thead>
           <tbody id="leaderboard-body"></tbody>
@@ -73,8 +76,9 @@
     <section class="panel">
       <div class="panel-title">
         <h2>Models</h2>
-        <span class="panel-sub">every checkpoint in checkpoints/ · click a name to rename
-          (files are never renamed — display names live in the registry)</span>
+        <span class="panel-sub">only finished models (a full training run promotes its
+          checkpoints here) · click a name to rename (files are never renamed — display
+          names live in the registry)</span>
       </div>
       <div class="table-scroll">
         <table id="models-table">

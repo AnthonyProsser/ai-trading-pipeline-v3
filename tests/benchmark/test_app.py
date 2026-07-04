@@ -17,7 +17,7 @@ from pathlib import Path
 import torch
 from fastapi.testclient import TestClient
 
-from constants import EXECUTION, PREDICTOR
+from constants import BENCHMARK, EXECUTION, PREDICTOR, TRAINING_UI
 from src.benchmark.app import BenchmarkRunner, create_app
 from src.benchmark.registry import write_benchmark_result
 
@@ -48,6 +48,7 @@ def _runner(
     tmp_path: Path,
     *,
     run_benchmark: Callable[[BenchmarkRunner, str], None] = lambda r, s: None,
+    training_metrics_dir: Path | None = None,
 ) -> BenchmarkRunner:
     checkpoint_dir = tmp_path / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -55,6 +56,7 @@ def _runner(
         checkpoint_dir=checkpoint_dir,
         benchmark_dir=checkpoint_dir / "benchmark",
         run_benchmark=run_benchmark,
+        training_metrics_dir=training_metrics_dir,
     )
 
 
@@ -236,21 +238,122 @@ def test_http_start_while_running_is_409(tmp_path: Path) -> None:
 
 # --- leaderboard -------------------------------------------------------------------
 
-def test_http_leaderboard_ranks_by_net_return_desc(tmp_path: Path) -> None:
+def test_http_leaderboard_ranks_by_directional_accuracy_desc(tmp_path: Path) -> None:
+    # The model forecasts price, so the board ranks by forecast ACCURACY (directional
+    # accuracy on the out-of-sample fold-test slice), not by net PnL — net PnL merely
+    # rewarded whichever model traded least. _STEM2 has lower net PnL but higher DA, so
+    # it must rank first.
     runner = _runner(tmp_path)
     _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
     _write_fake_checkpoint(runner.checkpoint_dir, _STEM2)
     write_benchmark_result(
-        runner.benchmark_dir, _STEM, {"trading": {"net_return": 0.01, "sharpe": 0.2}}
+        runner.benchmark_dir, _STEM,
+        {"trading": {"net_return": 0.05}, "statistical": {"directional_accuracy": 0.505}},
     )
     write_benchmark_result(
-        runner.benchmark_dir, _STEM2, {"trading": {"net_return": 0.05, "sharpe": 0.1}}
+        runner.benchmark_dir, _STEM2,
+        {"trading": {"net_return": 0.01}, "statistical": {"directional_accuracy": 0.560}},
     )
     client = TestClient(create_app(runner))
 
     rows = client.get("/api/leaderboard").json()["models"]
-    assert [row["stem"] for row in rows] == [_STEM2, _STEM]  # higher net PnL first
+    assert [row["stem"] for row in rows] == [_STEM2, _STEM]  # higher DA first
     assert rows[0]["rank"] == 1
+
+
+def test_http_leaderboard_ties_broken_by_pinball_asc(tmp_path: Path) -> None:
+    # Equal DA -> the better-calibrated model (lower pinball, the quantile scoring rule)
+    # ranks first.
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM2)
+    write_benchmark_result(
+        runner.benchmark_dir, _STEM,
+        {"trading": {}, "statistical": {"directional_accuracy": 0.53, "pinball": 0.9}},
+    )
+    write_benchmark_result(
+        runner.benchmark_dir, _STEM2,
+        {"trading": {}, "statistical": {"directional_accuracy": 0.53, "pinball": 0.4}},
+    )
+    client = TestClient(create_app(runner))
+    rows = client.get("/api/leaderboard").json()["models"]
+    assert [row["stem"] for row in rows] == [_STEM2, _STEM]  # lower pinball first
+
+
+def test_http_leaderboard_missing_da_sorts_last(tmp_path: Path) -> None:
+    # A benchmarked model with no directional_accuracy must not crash the sort and must
+    # rank below one that has a real DA.
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM2)
+    write_benchmark_result(runner.benchmark_dir, _STEM, {"trading": {}, "statistical": {}})
+    write_benchmark_result(
+        runner.benchmark_dir, _STEM2,
+        {"trading": {}, "statistical": {"directional_accuracy": 0.51}},
+    )
+    client = TestClient(create_app(runner))
+    rows = client.get("/api/leaderboard").json()["models"]
+    assert rows[0]["stem"] == _STEM2 and rows[1]["stem"] == _STEM
+
+
+# --- analysis endpoint (benchmark + training join for AI hypothesis generation) -----
+
+def test_http_analysis_joins_benchmark_and_training(tmp_path: Path) -> None:
+    from src.training_ui.exporter import append_fold_record, hyperparams_snapshot
+
+    metrics_dir = tmp_path / "metrics"
+    runner = _runner(tmp_path, training_metrics_dir=metrics_dir)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    write_benchmark_result(
+        runner.benchmark_dir, _STEM,
+        {"trading": {"net_return": 0.01}, "statistical": {"directional_accuracy": 0.53}},
+    )
+    append_fold_record(
+        metrics_dir,
+        {
+            "fold": 33, "train_loss": 0.6, "val_loss": 0.58, "da": 0.53,
+            "q_coverage": 0.9, "duration_s": 12.0, "stem": _STEM,
+            "hyperparams": hyperparams_snapshot(lookback=1440),
+        },  # type: ignore[arg-type]
+    )
+    client = TestClient(create_app(runner))
+
+    r = client.get(f"/api/analysis/{_STEM}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["stem"] == _STEM
+    assert body["benchmark"]["trading"]["net_return"] == 0.01
+    assert body["training"]["stem"] == _STEM
+    assert body["training"]["fold"] == 33
+    assert body["provenance"]["fold_index"] == 33
+
+
+def test_http_analysis_training_null_when_unmatched(tmp_path: Path) -> None:
+    metrics_dir = tmp_path / "metrics"
+    runner = _runner(tmp_path, training_metrics_dir=metrics_dir)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    write_benchmark_result(runner.benchmark_dir, _STEM, {"trading": {"net_return": 0.01}})
+    client = TestClient(create_app(runner))
+    body = client.get(f"/api/analysis/{_STEM}").json()
+    assert body["training"] is None
+
+
+def test_http_analysis_unknown_stem_is_404(tmp_path: Path) -> None:
+    client = TestClient(create_app(_runner(tmp_path)))
+    assert client.get("/api/analysis/nope").status_code == 404
+
+
+def test_http_analysis_no_benchmark_result_is_404(tmp_path: Path) -> None:
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    client = TestClient(create_app(runner))
+    assert client.get(f"/api/analysis/{_STEM}").status_code == 404
+
+
+def test_create_runner_reads_finished_dir() -> None:
+    from src.benchmark.app import REPO_ROOT, create_runner
+
+    assert create_runner().checkpoint_dir == REPO_ROOT / PREDICTOR.FINISHED_DIR
 
 
 def test_http_leaderboard_is_strict_json_and_groups_runs(tmp_path: Path) -> None:
@@ -278,3 +381,6 @@ def test_http_config_serves_rule_constants(tmp_path: Path) -> None:
     assert cfg["horizon"] == PREDICTOR.HORIZON
     assert cfg["target_semantics"] == PREDICTOR.TARGET_SEMANTICS
     assert cfg["null_draws"] >= 1
+    # UI thresholds sourced from constants so the JS client never hardcodes a copy.
+    assert cfg["null_significance_level"] == BENCHMARK.NULL_SIGNIFICANCE_LEVEL
+    assert cfg["alert_auto_dismiss_seconds"] == TRAINING_UI.ALERT_AUTO_DISMISS_SECONDS

@@ -13,6 +13,13 @@ Format:
 
 ---
 
+## 2026-07-03 — Benchmark: finished-models source, accuracy ranking, hit-rate fix, analysis endpoint
+- New decision keys: `benchmark_finished_models_source`, `benchmark_leaderboard_ranking`, `benchmark_analysis_endpoint`. Amended `benchmark_app` (ranking key: `trading.net_return` desc → `statistical.directional_accuracy` desc, `pinball` asc tie-break) and `benchmark_trading_rule` (hit rate now split: `directional_hit_rate` gross + `hit_rate` net-of-fee).
+- New `constants.py` values: `PredictorConfig.FINISHED_DIR = "checkpoints/finished"`; `BenchmarkConfig.NULL_SIGNIFICANCE_LEVEL = 0.05` (leaderboard p-value emphasis, served via `/api/config` alongside `alert_auto_dismiss_seconds` so `static/benchmark/app.js` stops hardcoding `0.05`/`8000` — decisions-auditor finding).
+- `train_all_folds` gained `finished_dir` param; on natural full-run completion it copies each fold's gate-evaluated checkpoint there and emits terminal `state:"completed"` (+`promoted` count) instead of `"stopped"`; `fold_complete` payload gained `stem`. `FoldRecord` gained `stem: NotRequired[str]`. Benchmark `create_runner` reads `FINISHED_DIR`; added `GET /api/analysis/{stem}` (benchmark⋈training join) and `BenchmarkRunner.training_metrics_dir`.
+- Reason: (a) show only finished models; (b) leaderboard was ranking by total net PnL, which rewarded trading least (negative-EV trades) — the model forecasts price, so rank by accuracy; (c) "<5% hit rate" was the net-of-fee win rate mislabeled — added gross directional hit rate; (d) expose combined data for AI hypothesis generation.
+- Source: conversation (user report + delegated ranking choice).
+
 ## 2026-07-03 — Model benchmark app (`src/benchmark/`) + eval_predictor scope reduction
 - New decision keys: `benchmark_app`, `benchmark_trading_rule`, `benchmark_eval_slice`, `benchmark_null_baselines`, `benchmark_registry`, `benchmark_metric_salvage` (new "Model benchmark app" section in DECISIONS.md Cross-cutting).
 - New `constants.py` group `BenchmarkConfig` (`BENCHMARK` singleton): `BENCHMARK_DIR = "checkpoints/benchmark"`, `REGISTRY_FILENAME = "registry.json"`, `RESULT_SUFFIX = ".benchmark.json"`, `NULL_DRAWS = 200`, `NULL_SEED = 0`. Added `ExecutionConfig.BENCHMARK_UI_BIND_PORT = 8002`.
