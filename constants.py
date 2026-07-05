@@ -179,6 +179,11 @@ class PredictorConfig:
     CHECKPOINT_DIR: str = "checkpoints"
     CHECKPOINT_WEIGHTS_SUFFIX: str = ".pt"
     CHECKPOINT_SCALER_SUFFIX: str = ".scaler.pkl"
+    # Models that FINISHED training (a full walk-forward run that reached its natural
+    # end, no user stop) are copied here; the benchmark app reads only this directory,
+    # so scratch/manual/search checkpoints in CHECKPOINT_DIR never reach the leaderboard.
+    # Flagged unspecced: name is a chosen default (DECISIONS.md benchmark_finished_models_source).
+    FINISHED_DIR: str = "checkpoints/finished"
 
     # Training UI fold-history export (training-dashboard.md §"Fold history export").
     # Written under CHECKPOINT_DIR; the handoff artifact for post-training analysis.
@@ -268,6 +273,40 @@ class TrainingUIConfig:
 
 
 # ============================================================
+# Model benchmark app (cross-phase tooling — src/benchmark/)
+# ============================================================
+@dataclass(frozen=True)
+class BenchmarkConfig:
+    """Benchmarking app settings. The trading RULE itself carries no constants of its
+    own by design — it reads EXECUTION.FEE_THRESHOLD (round-trip fee gate) and
+    PREDICTOR.HORIZON (hold length), and the no-straddle confidence gate compares
+    against zero. A rule threshold that existed only here would be a second, silently
+    divergent copy of the fee model.
+    """
+
+    # Registry + per-model result JSONs live under the checkpoint dir so model-adjacent
+    # artifacts stay together (training_metrics.json already lives there). Nothing in
+    # this directory is ever read by src/ deploy/manifest paths.
+    BENCHMARK_DIR: str = "checkpoints/benchmark"
+    REGISTRY_FILENAME: str = "registry.json"
+    RESULT_SUFFIX: str = ".benchmark.json"
+
+    # Random-entry null baseline: draws of matched-trade-count random entries with
+    # random direction; the permutation-style p-value = (1 + #{null >= model}) /
+    # (draws + 1), so 200 draws give a floor of ~0.005 — enough resolution around the
+    # p < 0.05 the pre-live permutation gate uses, cheap enough to run per model.
+    NULL_DRAWS: int = 200
+    # Fixed seed so a cached benchmark JSON is reproducible bit-for-bit on re-run.
+    NULL_SEED: int = 0
+    # Display-only: p-values below this get the "significant" emphasis in the leaderboard.
+    # Mirrors the pre-live permutation gate's p < 0.05 (DECISIONS.md Pre-live gate). Kept
+    # here (not shared with the not-yet-built scripts/permutation_test.py) so the JS client
+    # reads it from /api/config instead of hardcoding a copy; revisit the home if that
+    # script later needs the identical threshold.
+    NULL_SIGNIFICANCE_LEVEL: float = 0.05
+
+
+# ============================================================
 # Trader (rules-based for v3)
 # ============================================================
 @dataclass(frozen=True)
@@ -329,6 +368,8 @@ class ExecutionConfig:
     DASHBOARD_BIND_PORT: int = 8000
     # Training UI runs as a separate FastAPI process on its own port, same bind host.
     TRAINING_UI_BIND_PORT: int = 8001
+    # Model benchmark app (src/benchmark/) — its own port, same 127.0.0.1-only bind.
+    BENCHMARK_UI_BIND_PORT: int = 8002
 
     # agent_config.json schema version. deploy_predictor refuses to overwrite a config
     # whose schema_version differs (surfaces silent schema drift). See agent-config.md.
@@ -366,6 +407,7 @@ class RLConfig:
 DATA = DataConfig()
 PREDICTOR = PredictorConfig()
 TRAINING_UI = TrainingUIConfig()
+BENCHMARK = BenchmarkConfig()
 TRADER = TraderConfig()
 EXECUTION = ExecutionConfig()
 RL = RLConfig()

@@ -84,3 +84,22 @@ def test_read_fold_records_round_trips(tmp_path: Path) -> None:
     }
     append_fold_record(tmp_path, rec)  # type: ignore[arg-type]
     assert read_fold_records(tmp_path) == [rec]
+
+
+def test_fold_record_carries_stem_join_key(tmp_path: Path) -> None:
+    # The run-tag stem is the join key the benchmark analysis endpoint uses to pair a
+    # benchmark result with the training run that produced it.
+    from src.training_ui.exporter import (
+        append_fold_record,
+        hyperparams_snapshot,
+        read_fold_records,
+    )
+
+    rec = {
+        "fold": 0, "train_loss": 0.5, "val_loss": 0.48, "da": 0.54,
+        "q_coverage": 0.90, "duration_s": 12.0,
+        "stem": "abc1234-s001e4348-c487b9e2e-fold0",
+        "hyperparams": hyperparams_snapshot(lookback=1440),
+    }
+    append_fold_record(tmp_path, rec)  # type: ignore[arg-type]
+    assert read_fold_records(tmp_path)[0]["stem"] == "abc1234-s001e4348-c487b9e2e-fold0"

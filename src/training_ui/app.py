@@ -186,6 +186,7 @@ def _default_run_training(runner: TrainingRunner) -> None:
         if payload.get("type") == "fold_complete":
             record: FoldRecord = {
                 "fold": int(payload["fold"]),  # type: ignore[call-overload]
+                "stem": str(payload["stem"]),
                 "train_loss": float(payload["train_loss"]),  # type: ignore[arg-type]
                 "val_loss": float(payload["val_loss"]),  # type: ignore[arg-type]
                 "da": float(payload["da"]),  # type: ignore[arg-type]
@@ -202,6 +203,7 @@ def _default_run_training(runner: TrainingRunner) -> None:
         max_epochs=PREDICTOR.MAX_EPOCHS, checkpoint_dir=runner.checkpoint_dir,
         git_sha=_git_short_sha(), constants_sha=sha256_file(REPO_ROOT / "constants.py"),
         log=log, stop_event=runner.stop_event, save_event=runner.save_event,
+        finished_dir=REPO_ROOT / PREDICTOR.FINISHED_DIR,
     )
 
 
