@@ -177,6 +177,20 @@ function pCell(p) {
   return td(fmtNum(p, 3), `num ${cls}`);
 }
 
+function gradeTooltip(grade) {
+  if (!CONFIG) return "";
+  const p = CONFIG.profitable_p_value_max;
+  const n = CONFIG.profitable_min_trades;
+  if (grade === "profitable")
+    return `Profitable: positive net-of-fee expectancy per trade, beats the ` +
+      `random-entry null (p < ${p}), and >= ${n} trades.`;
+  if (grade === "insufficient")
+    return `Insufficient: fewer than ${n} trades (or none) — expectancy too ` +
+      `noisy to grade. Neither green nor red.`;
+  return `Not profitable: fails positive per-trade expectancy and/or does not ` +
+    `beat the random-entry null (p < ${p}).`;
+}
+
 function calCell(cal) {
   if (cal === null || cal === undefined) return td("—", "num dim");
   const inBand = cal >= CONFIG.deploy_gate_cal_lower && cal <= CONFIG.deploy_gate_cal_upper;
@@ -199,7 +213,15 @@ function renderLeaderboard(payload) {
     const s = r.statistical || {};
     const e = r.economic || {};
     const row = document.createElement("tr");
-    if (r.rank === 1) row.className = "top-rank";
+    const rowClasses = [];
+    if (r.rank === 1) rowClasses.push("top-rank");
+    // Green-grade tint is orthogonal to rank: profitable = positive per-trade
+    // expectancy AND beats the random-entry null (p < profitable_p_value_max) AND
+    // >= profitable_min_trades trades; insufficient = below the trade floor.
+    if (r.profitability === "profitable") rowClasses.push("row-profitable");
+    else if (r.profitability === "insufficient") rowClasses.push("row-insufficient");
+    if (rowClasses.length) row.className = rowClasses.join(" ");
+    row.title = gradeTooltip(r.profitability);
     row.appendChild(td(String(r.rank), "num rank"));
     const name = td(
       `${esc(r.display_name)}<span class="stem-sub">${esc(r.stem)}</span>`, "name-cell"
@@ -232,9 +254,11 @@ function renderLeaderboard(payload) {
   for (const g of payload.runs) {
     const card = document.createElement("div");
     card.className = "run-card";
+    const profClass = g.n_profitable > 0 ? "pos" : "dim";
     card.innerHTML =
       `run <b>${esc(g.git_sha)}</b> · constants <b>${esc(g.constants_sha8)}</b> · ` +
-      `${g.n_models} model${g.n_models === 1 ? "" : "s"} · mean DA ` +
+      `${g.n_models} model${g.n_models === 1 ? "" : "s"} · ` +
+      `<b class="${profClass}">${g.n_profitable}/${g.n_models} profitable</b> · mean DA ` +
       `<b>${fmtNum(g.mean_da, 3)}</b> · mean net ` +
       `<b class="${signClass(g.mean_net_return)}">${fmtPct(g.mean_net_return)}</b>`;
     runs.appendChild(card);

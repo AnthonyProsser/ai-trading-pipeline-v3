@@ -304,6 +304,16 @@ class BenchmarkConfig:
     # reads it from /api/config instead of hardcoding a copy; revisit the home if that
     # script later needs the identical threshold.
     NULL_SIGNIFICANCE_LEVEL: float = 0.05
+    # Leaderboard green-grade gate: a model is "profitable" iff mean net-of-fee
+    # log-return per trade > 0 AND its net PnL beats the random-entry null at
+    # p < PROFITABLE_P_VALUE_MAX AND it made at least PROFITABLE_MIN_TRADES trades.
+    # Below the trade floor (or with no trades -> NaN p_value) the per-trade expectancy
+    # estimate is luck-dominated, so the model is graded "insufficient" — neither green
+    # nor red. Deliberately looser than NULL_SIGNIFICANCE_LEVEL / the pre-live
+    # permutation gate's p < 0.05: this is a paper-trading dashboard grade, not a
+    # capital gate. Both values user-chosen (CHANGELOG 2026-07-05).
+    PROFITABLE_P_VALUE_MAX: float = 0.10
+    PROFITABLE_MIN_TRADES: int = 30
 
 
 # ============================================================

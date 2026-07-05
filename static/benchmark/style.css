@@ -94,6 +94,10 @@ tr.flash { animation: rowflash 1.6s ease-out; }
 .rank { color: #8a8a8a; }
 tr.top-rank .rank { color: #f5d98a; font-weight: 700; }
 
+/* Green-grade row tint: profitable vs the random-entry null; insufficient = dimmed. */
+tr.row-profitable { background: rgba(46, 204, 113, .08); }
+tr.row-insufficient { opacity: .55; }
+
 .name-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
 .name-btn {
   background: none; border: none; color: #e8e8e8; font: inherit; cursor: pointer;

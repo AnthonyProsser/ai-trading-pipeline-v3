@@ -33,6 +33,7 @@ from src.benchmark.registry import (
     scan_checkpoints,
     set_display_name,
 )
+from src.benchmark.trading_sim import profitability_grade
 from src.training_ui.exporter import read_fold_records
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -207,6 +208,17 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
         def net_of(row: dict[str, object]) -> float | None:
             return _num(row, "trading", "net_return")
 
+        def grade_of(row: dict[str, object]) -> str:
+            # Missing numbers -> NaN/0, which profitability_grade reads as "insufficient".
+            net = _num(row, "trading", "net_return")
+            p = _num(row, "baselines", "p_value")
+            count = _num(row, "trading", "trade_count")
+            return profitability_grade(
+                float("nan") if net is None else net,
+                0 if count is None else int(count),
+                float("nan") if p is None else p,
+            )
+
         # The model forecasts price, so the board ranks by forecast ACCURACY on the
         # out-of-sample fold-test slice: directional accuracy desc, tie-broken by pinball
         # (the quantile scoring rule) asc. Both are trade-count-independent, so a model no
@@ -222,6 +234,9 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
         rows.sort(key=rank_key)
         for rank, row in enumerate(rows, start=1):
             row["rank"] = rank
+            # Green-grade is orthogonal to rank (rank = forecast accuracy; grade =
+            # tradeable profitability vs the null). Both live on the row.
+            row["profitability"] = grade_of(row)
 
         groups: dict[tuple[object, object], list[dict[str, object]]] = {}
         for row in rows:
@@ -236,6 +251,7 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
                     "git_sha": git_sha,
                     "constants_sha8": constants_sha8,
                     "n_models": len(members),
+                    "n_profitable": sum(r["profitability"] == "profitable" for r in members),
                     "mean_da": sum(das) / len(das) if das else None,
                     "mean_net_return": sum(nets) / len(nets) if nets else None,
                 }
@@ -261,6 +277,8 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
             "quantiles": list(PREDICTOR.QUANTILES),
             "null_draws": BENCHMARK.NULL_DRAWS,
             "null_significance_level": BENCHMARK.NULL_SIGNIFICANCE_LEVEL,
+            "profitable_p_value_max": BENCHMARK.PROFITABLE_P_VALUE_MAX,
+            "profitable_min_trades": BENCHMARK.PROFITABLE_MIN_TRADES,
             "alert_auto_dismiss_seconds": TRAINING_UI.ALERT_AUTO_DISMISS_SECONDS,
             "deploy_gate_da_threshold": PREDICTOR.DEPLOY_GATE_DA_THRESHOLD,
             "deploy_gate_cal_lower": PREDICTOR.DEPLOY_GATE_CAL_LOWER,

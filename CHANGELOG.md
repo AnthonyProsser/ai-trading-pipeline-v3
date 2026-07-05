@@ -13,6 +13,13 @@ Format:
 
 ---
 
+## 2026-07-05 — Benchmark: expectancy-based green "profitable" grade vs the random-entry null
+- Amended `benchmark_leaderboard_ranking`: added a **green-grade** definition. Rank basis is UNCHANGED (`directional_accuracy` desc / `pinball` asc). New orthogonal three-state per-row classification `profitability` ∈ {`profitable`, `not_profitable`, `insufficient`}: green iff net-of-fee expectancy per trade > 0 (`trading.net_return / trading.trade_count > 0`) AND `baselines.p_value < PROFITABLE_P_VALUE_MAX` (beats the random-entry null) AND `trading.trade_count >= PROFITABLE_MIN_TRADES`; `insufficient` below the trade floor or on non-finite inputs; else `not_profitable`. Run-group summary gains `n_profitable`.
+- New `constants.py` values: `BenchmarkConfig.PROFITABLE_P_VALUE_MAX = 0.10`, `BenchmarkConfig.PROFITABLE_MIN_TRADES = 30` (served via `/api/config` so `static/benchmark/app.js` never hardcodes them). `NULL_SIGNIFICANCE_LEVEL = 0.05` unchanged (stays the p-cell display-emphasis level / pre-live-gate mirror — deliberately two thresholds).
+- New pure function `src/benchmark/trading_sim.py::profitability_grade(net_return, trade_count, p_value)`; grade computed at leaderboard read time (not persisted into `{stem}.benchmark.json`, so threshold changes don't invalidate cached results). Frontend tints profitable rows green, dims insufficient rows.
+- Reason: user wants the board to headline how many models clear a real profitability bar, not just the single best forecaster. Expectancy > $0/trade is the money question; the p-value gate blocks luck; the trade floor blocks a 2-trade fluke grading the same as a 50-trade edge. p < 0.10 and ≥ 30 trades chosen by the user (looser than the 0.05 capital gate — this is a dashboard, not an allocation decision).
+- Source: conversation (user request + delegated threshold choices).
+
 ## 2026-07-03 — Benchmark: finished-models source, accuracy ranking, hit-rate fix, analysis endpoint
 - New decision keys: `benchmark_finished_models_source`, `benchmark_leaderboard_ranking`, `benchmark_analysis_endpoint`. Amended `benchmark_app` (ranking key: `trading.net_return` desc → `statistical.directional_accuracy` desc, `pinball` asc tie-break) and `benchmark_trading_rule` (hit rate now split: `directional_hit_rate` gross + `hit_rate` net-of-fee).
 - New `constants.py` values: `PredictorConfig.FINISHED_DIR = "checkpoints/finished"`; `BenchmarkConfig.NULL_SIGNIFICANCE_LEVEL = 0.05` (leaderboard p-value emphasis, served via `/api/config` alongside `alert_auto_dismiss_seconds` so `static/benchmark/app.js` stops hardcoding `0.05`/`8000` — decisions-auditor finding).
