@@ -256,6 +256,34 @@ def test_default_run_training_filters_pre_historical_start_candles(
     assert len(folds) == len(make_folds(carve_locked_test(n_post)))
 
 
+def test_default_run_training_passes_finished_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dashboard's real-data path tells train_all_folds where to promote finished
+    models, so a completed run populates the benchmark's finished directory."""
+    import numpy as np
+
+    import src.training_ui.app as app_module
+    from constants import DATA, PREDICTOR
+
+    n = 331_000
+    cutoff = np.datetime64(DATA.HISTORICAL_START, "m")
+    timestamps = cutoff + np.arange(n) * np.timedelta64(1, "m")
+    ohlcv = np.tile(np.array([100.0, 101.0, 99.0, 100.0, 1.0]), (n, 1))
+    monkeypatch.setattr(app_module, "_load_real_candles", lambda path: (timestamps, ohlcv))
+
+    captured: dict[str, object] = {}
+
+    def fake_train_all_folds(features: object, feature_ts: object, folds: object,
+                             **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(app_module, "train_all_folds", fake_train_all_folds)
+    app_module._default_run_training(_runner(tmp_path))
+
+    assert captured["finished_dir"] == app_module.REPO_ROOT / PREDICTOR.FINISHED_DIR
+
+
 def test_http_start_success_returns_running_state(tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 

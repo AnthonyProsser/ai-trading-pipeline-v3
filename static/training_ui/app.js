@@ -393,10 +393,14 @@ function pushAlert({ level, message }) {
 // ---- SSE message routing ----
 function handleMessage(payload) {
   switch (payload.type) {
-    case "status":
+    case "status": {
       if (typeof payload.wandb_mode === "string") renderWandb(payload.wandb_mode, payload.wandb_run_id);
-      setStatus(payload.state, defaultStatusText(payload.state));
+      const text = payload.state === "done" && typeof payload.promoted === "number"
+        ? `Training complete — ${payload.promoted} model${payload.promoted === 1 ? "" : "s"} promoted to benchmark`
+        : defaultStatusText(payload.state);
+      setStatus(payload.state, text);
       break;
+    }
     case "batch":
       if (typeof payload.total_folds === "number") state.totalFolds = payload.total_folds;
       state.curFold = payload.fold;

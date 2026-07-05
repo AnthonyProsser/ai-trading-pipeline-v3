@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model Benchmark — BTC Predictor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <span class="app-title">MODEL BENCHMARK</span>
+      <span class="badge">BTC-BOT V3</span>
+    </div>
+    <div class="header-center">
+      <span id="status-dot" class="status-dot"></span>
+      <span id="status-text" class="status-text">connecting…</span>
+    </div>
+    <div class="header-right">
+      <span id="model-count" class="count-chip">— models</span>
+    </div>
+  </header>
+
+  <!-- The fixed measuring instrument, stated up front so a score is never read
+       without its rule. Populated from /api/config — no hardcoded thresholds. -->
+  <section class="rule-banner" id="rule-banner">
+    <span class="rule-icon">⚖</span>
+    <span id="rule-text">Loading the measuring instrument…</span>
+  </section>
+
+  <div id="progress-banner" class="progress-banner hidden">
+    <span class="btn-spinner"></span>
+    <span id="progress-text"></span>
+  </div>
+
+  <main class="main">
+    <section class="panel">
+      <div class="panel-title">
+        <h2>Leaderboard</h2>
+        <span class="panel-sub">ranked by directional accuracy on each model's own
+          out-of-sample fold-test slice (tie-break: pinball loss) — the model forecasts
+          price, so accuracy is the rank basis; net PnL / p(null) show tradeability, not
+          rank</span>
+      </div>
+      <div class="table-scroll">
+        <table id="leaderboard-table">
+          <thead>
+            <tr>
+              <th class="num">#</th>
+              <th>Model</th>
+              <th class="num">Fold</th>
+              <th class="num" title="Directional accuracy on the out-of-sample fold-test slice — the rank basis">DA</th>
+              <th class="num" title="[q10,q90] calibration — gate band from config">Cal.</th>
+              <th class="num" title="Pinball (quantile) loss — the accuracy tie-breaker; lower is better">Pinball</th>
+              <th class="num" title="Sum of per-trade net log-returns, shown as %">Net</th>
+              <th class="num" title="vs buy-and-hold over the same slice">vs B&H</th>
+              <th class="num" title="Random-entry null at matched trade frequency">p(null)</th>
+              <th class="num" title="Per-trade Sharpe (no annualization)">Sharpe</th>
+              <th class="num">Max DD</th>
+              <th class="num">Trades</th>
+              <th class="num" title="Directional hit rate — share of trades on the right side, pre-fee (~50% expected)">Hit</th>
+              <th class="num" title="Net win rate — share of trades profitable after the round-trip fee">Net win</th>
+              <th class="num" title="Mean fraction of the predicted move captured">Capt.</th>
+              <th class="num" title="Mean adverse excursion / predicted magnitude">Adv.</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboard-body"></tbody>
+        </table>
+        <div id="leaderboard-empty" class="empty-note hidden">
+          No benchmarked models yet — start one below.
+        </div>
+      </div>
+      <div id="runs-summary" class="runs-summary"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">
+        <h2>Models</h2>
+        <span class="panel-sub">only finished models (a full training run promotes its
+          checkpoints here) · click a name to rename (files are never renamed — display
+          names live in the registry)</span>
+      </div>
+      <div class="table-scroll">
+        <table id="models-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th class="num">Fold</th>
+              <th>Commit</th>
+              <th class="num">Lookback</th>
+              <th>Trained through (UTC)</th>
+              <th class="num" title="Training-time q90 coverage baseline">q90 cov</th>
+              <th>Benchmark</th>
+            </tr>
+          </thead>
+          <tbody id="models-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="alerts" class="alerts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
