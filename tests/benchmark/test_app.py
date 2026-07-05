@@ -296,6 +296,91 @@ def test_http_leaderboard_missing_da_sorts_last(tmp_path: Path) -> None:
     assert rows[0]["stem"] == _STEM2 and rows[1]["stem"] == _STEM
 
 
+# --- profitability grade (green classification) ------------------------------------
+
+def _profitable_result(da: float = 0.53) -> dict[str, object]:
+    # Positive per-trade expectancy, above the trade floor, beats the null (p < 0.10).
+    return {
+        "trading": {"net_return": 0.05, "trade_count": BENCHMARK.PROFITABLE_MIN_TRADES},
+        "baselines": {"p_value": 0.02},
+        "statistical": {"directional_accuracy": da},
+    }
+
+
+def test_http_leaderboard_row_grade_profitable(tmp_path: Path) -> None:
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    write_benchmark_result(runner.benchmark_dir, _STEM, _profitable_result())
+    client = TestClient(create_app(runner))
+    rows = client.get("/api/leaderboard").json()["models"]
+    assert rows[0]["profitability"] == "profitable"
+
+
+def test_http_leaderboard_row_grade_not_profitable_on_weak_p(tmp_path: Path) -> None:
+    # Money-positive, above the floor, but indistinguishable from the random-entry null.
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    write_benchmark_result(
+        runner.benchmark_dir, _STEM,
+        {
+            "trading": {"net_return": 0.05, "trade_count": BENCHMARK.PROFITABLE_MIN_TRADES},
+            "baselines": {"p_value": 0.40},
+        },
+    )
+    client = TestClient(create_app(runner))
+    rows = client.get("/api/leaderboard").json()["models"]
+    assert rows[0]["profitability"] == "not_profitable"
+
+
+def test_http_leaderboard_row_grade_insufficient_below_floor(tmp_path: Path) -> None:
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    write_benchmark_result(
+        runner.benchmark_dir, _STEM,
+        {
+            "trading": {"net_return": 0.9,
+                        "trade_count": BENCHMARK.PROFITABLE_MIN_TRADES - 1},
+            "baselines": {"p_value": 0.01},
+        },
+    )
+    client = TestClient(create_app(runner))
+    rows = client.get("/api/leaderboard").json()["models"]
+    assert rows[0]["profitability"] == "insufficient"
+
+
+def test_http_leaderboard_row_grade_insufficient_when_blocks_missing(tmp_path: Path) -> None:
+    # A result with no trading/baselines blocks must not crash the sort and grades
+    # "insufficient" (no p_value/trade_count to judge). Strict JSON is preserved.
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    write_benchmark_result(runner.benchmark_dir, _STEM, {"statistical": {}})
+    client = TestClient(create_app(runner))
+    payload = client.get("/api/leaderboard").json()
+    json.dumps(payload, allow_nan=False)
+    assert payload["models"][0]["profitability"] == "insufficient"
+
+
+def test_http_leaderboard_run_group_counts_profitable(tmp_path: Path) -> None:
+    # Two models in the same run group (same git_sha + constants_sha8): one green, one not.
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM2)
+    write_benchmark_result(runner.benchmark_dir, _STEM, _profitable_result(da=0.55))
+    write_benchmark_result(
+        runner.benchmark_dir, _STEM2,
+        {
+            "trading": {"net_return": 0.05, "trade_count": BENCHMARK.PROFITABLE_MIN_TRADES},
+            "baselines": {"p_value": 0.40},
+            "statistical": {"directional_accuracy": 0.52},
+        },
+    )
+    client = TestClient(create_app(runner))
+    runs = client.get("/api/leaderboard").json()["runs"]
+    assert len(runs) == 1
+    assert runs[0]["n_models"] == 2
+    assert runs[0]["n_profitable"] == 1
+
+
 # --- analysis endpoint (benchmark + training join for AI hypothesis generation) -----
 
 def test_http_analysis_joins_benchmark_and_training(tmp_path: Path) -> None:
@@ -384,3 +469,6 @@ def test_http_config_serves_rule_constants(tmp_path: Path) -> None:
     # UI thresholds sourced from constants so the JS client never hardcodes a copy.
     assert cfg["null_significance_level"] == BENCHMARK.NULL_SIGNIFICANCE_LEVEL
     assert cfg["alert_auto_dismiss_seconds"] == TRAINING_UI.ALERT_AUTO_DISMISS_SECONDS
+    # Green-grade thresholds sourced from constants so the JS client never hardcodes them.
+    assert cfg["profitable_p_value_max"] == BENCHMARK.PROFITABLE_P_VALUE_MAX
+    assert cfg["profitable_min_trades"] == BENCHMARK.PROFITABLE_MIN_TRADES

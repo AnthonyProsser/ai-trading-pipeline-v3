@@ -18,11 +18,12 @@ import numpy as np
 import pytest
 import torch
 
-from constants import DATA, EXECUTION, PREDICTOR
+from constants import BENCHMARK, DATA, EXECUTION, PREDICTOR
 from src.benchmark.trading_sim import (
     buy_and_hold,
     extract_signals,
     ledger_stats,
+    profitability_grade,
     random_entry_null,
     simulate_trades,
 )
@@ -221,3 +222,53 @@ def test_random_entry_null_places_full_count_under_tight_packing() -> None:
     )
     assert out["null_mean"] == pytest.approx(-count * fee)
     assert out["null_std"] == pytest.approx(0.0)
+
+
+# --- profitability grade (leaderboard green classification) -------------------------
+#
+# Green ("profitable") iff mean net-of-fee log-return per trade > 0 AND the model beats
+# the random-entry null (p_value < BENCHMARK.PROFITABLE_P_VALUE_MAX) AND it made at
+# least BENCHMARK.PROFITABLE_MIN_TRADES trades. Below the trade floor, or with a
+# non-finite input (no trades -> NaN p_value), the estimate is luck-dominated and the
+# model is "insufficient" — neither green nor red.
+
+_MIN = BENCHMARK.PROFITABLE_MIN_TRADES
+_PMAX = BENCHMARK.PROFITABLE_P_VALUE_MAX
+
+
+def test_profitability_grade_profitable() -> None:
+    # Positive per-trade expectancy, clearly beats the null, well above the trade floor.
+    assert profitability_grade(net_return=0.5, trade_count=50, p_value=0.04) == "profitable"
+
+
+def test_profitability_grade_p_value_boundary_is_strict() -> None:
+    # p just under the threshold grades green; exactly at it does not (strict <).
+    assert profitability_grade(0.5, 50, _PMAX - 1e-9) == "profitable"
+    assert profitability_grade(0.5, 50, _PMAX) == "not_profitable"
+
+
+def test_profitability_grade_positive_expectancy_but_indistinct_from_null() -> None:
+    # Money-positive but not statistically distinguishable from random entry -> red.
+    assert profitability_grade(0.5, 50, 0.30) == "not_profitable"
+
+
+def test_profitability_grade_negative_expectancy() -> None:
+    # Loses money per trade even though it beats the null on the (negative) direction.
+    assert profitability_grade(-0.5, 50, 0.01) == "not_profitable"
+
+
+def test_profitability_grade_trade_floor_boundary() -> None:
+    # One below the floor is insufficient; exactly at the floor is gradeable (>=).
+    assert profitability_grade(0.5, _MIN - 1, 0.01) == "insufficient"
+    assert profitability_grade(0.5, _MIN, 0.01) == "profitable"
+
+
+def test_profitability_grade_no_trades_is_insufficient() -> None:
+    assert profitability_grade(0.0, 0, float("nan")) == "insufficient"
+
+
+def test_profitability_grade_non_finite_inputs_are_insufficient() -> None:
+    # A benchmarked model above the trade floor but with a NaN p_value (or NaN net)
+    # cannot be graded — insufficient, never green or red.
+    assert profitability_grade(0.5, 50, float("nan")) == "insufficient"
+    assert profitability_grade(float("nan"), 50, 0.01) == "insufficient"
