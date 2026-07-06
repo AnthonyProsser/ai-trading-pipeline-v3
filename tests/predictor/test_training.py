@@ -26,6 +26,20 @@ _F = DATA.NUM_INPUT_FEATURES
 _LOOKBACK = PREDICTOR.PATCH_SIZE * 2  # 32: small but divisible by PATCH_SIZE
 _H = PREDICTOR.HORIZON
 
+# Synthetic fold slice sizes derived from the windowing requirement
+# (rows >= lookback + horizon) so this file stays green at any HORIZON; the "+ k"
+# pads reproduce the window counts of the original H=15 literals.
+_TR = _LOOKBACK + _H + 103  # standard train slice: 104 windows
+_VA = _LOOKBACK + _H + 53  # standard val slice: 54 windows
+_TE = _LOOKBACK + _H + 3  # test slice (never consumed by build_fold_loaders)
+_N = _TR + _VA + _TE
+_N2 = 2 * _TR + 2 * _VA  # two-fold layout; fold 1's test slice spans _VA rows
+_TR_BIG = _LOOKBACK + _H + 203  # throttle test: 204 windows at batch 8
+_N_BIG = _TR_BIG + _VA + _TE
+_TR_TINY = _LOOKBACK + _H + 3  # 4 train windows < batch 16 with drop_last -> 0 batches
+_VA_TINY = _LOOKBACK + _H + 13
+_N_TINY = _TR_TINY + _VA_TINY
+
 
 def _synthetic(n: int) -> tuple[np.ndarray, np.ndarray]:
     """Random-walk-ish log-return features + aligned 1-minute timestamps."""
@@ -40,7 +54,7 @@ def test_window_dataset_shapes_and_count() -> None:
     torch = pytest.importorskip("torch")
     from src.predictor.training import WindowDataset
 
-    n = 120
+    n = _LOOKBACK + _H + 73  # 73 windows
     x = torch.zeros((n, _F))
     y = torch.zeros((n, _F))
     ds = WindowDataset(x, y, lookback=_LOOKBACK, horizon=_H)
@@ -55,7 +69,7 @@ def test_window_dataset_returns_scaled_x_and_raw_y() -> None:
     torch = pytest.importorskip("torch")
     from src.predictor.training import WindowDataset
 
-    n = 80
+    n = _LOOKBACK + _H + 33  # 33 windows
     x_scaled = torch.full((n, _F), 0.5)  # stand-in "scaled" inputs
     y_raw = torch.arange(n * _F, dtype=torch.float32).reshape(n, _F)  # distinct raw values
     ds = WindowDataset(x_scaled, y_raw, lookback=_LOOKBACK, horizon=_H)
@@ -70,8 +84,8 @@ def test_build_fold_loaders_scales_on_train_and_shapes() -> None:
     from src.data.walk_forward import Fold
     from src.predictor.training import build_fold_loaders
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)  # tiny hand-made fold
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)  # tiny hand-made fold
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -91,8 +105,8 @@ def test_train_one_fold_finite_separated_losses() -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -135,8 +149,8 @@ def test_train_one_fold_rejects_non_positive_epochs() -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -161,9 +175,9 @@ def test_train_one_fold_raises_on_empty_train_loader() -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(110)
+    feats, ts = _synthetic(_N_TINY)
     # train slice -> 4 windows < batch 16 with drop_last -> 0 batches.
-    fold = Fold(0, 0, 50, 50, 110, 110, 110)
+    fold = Fold(0, 0, _TR_TINY, _TR_TINY, _N_TINY, _N_TINY, _N_TINY)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -179,8 +193,8 @@ def test_train_one_fold_max_steps_early_exit() -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -198,8 +212,8 @@ def test_train_one_fold_raises_on_nonfinite_val(monkeypatch: pytest.MonkeyPatch)
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -223,8 +237,8 @@ def test_train_one_fold_restores_best_val_weights(monkeypatch: pytest.MonkeyPatc
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -264,8 +278,8 @@ def test_save_checkpoint_round_trips(tmp_path: object) -> None:
     from src.predictor.training import build_fold_loaders, save_checkpoint
 
     out_dir = Path(str(tmp_path))
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, _, _ = build_fold_loaders(feats, ts, fold, lookback=_LOOKBACK, batch_size=16)
     model = PatchTST(lookback=_LOOKBACK)
 
@@ -308,8 +322,8 @@ def test_evaluate_q90_coverage_finite_in_range() -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, evaluate_q90_coverage
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     _, _, val_loader = build_fold_loaders(feats, ts, fold, lookback=_LOOKBACK, batch_size=16)
     model = PatchTST(lookback=_LOOKBACK)
 
@@ -326,13 +340,43 @@ def test_evaluate_directional_accuracy_finite_or_nan() -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, evaluate_directional_accuracy
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     _, _, val_loader = build_fold_loaders(feats, ts, fold, lookback=_LOOKBACK, batch_size=16)
     model = PatchTST(lookback=_LOOKBACK)
 
     da = evaluate_directional_accuracy(model, val_loader, device="cpu")
     assert np.isnan(da) or (0.0 <= da <= 1.0)
+
+
+def test_evaluate_directional_accuracy_scores_final_step_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The DA collector passes ONLY the final horizon step to
+    deploy_gates.directional_accuracy — the move a hold-to-horizon trade actually
+    spans — i.e. a (N, DIM, Q)/(N, DIM) slice, not the full (N, H, DIM, Q) path."""
+    pytest.importorskip("torch")
+    import src.predictor.training as training_mod
+    from src.data.walk_forward import Fold
+    from src.predictor.model import PatchTST
+    from src.predictor.training import build_fold_loaders, evaluate_directional_accuracy
+
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
+    _, _, val_loader = build_fold_loaders(feats, ts, fold, lookback=_LOOKBACK, batch_size=16)
+    model = PatchTST(lookback=_LOOKBACK)
+
+    seen: dict[str, int] = {}
+
+    def spy(pred: object, target: object, *args: object, **kwargs: object) -> float:
+        seen["pred_ndim"] = pred.ndim  # type: ignore[attr-defined]
+        seen["target_ndim"] = target.ndim  # type: ignore[attr-defined]
+        return 0.5
+
+    monkeypatch.setattr(training_mod, "directional_accuracy", spy)
+    evaluate_directional_accuracy(model, val_loader, device="cpu")
+    assert seen["pred_ndim"] == 3  # (N, DIM, Q) — final step only
+    assert seen["target_ndim"] == 2  # (N, DIM)
 
 
 def test_train_one_fold_batch_payload_includes_fold_lr_grad_norm() -> None:
@@ -343,8 +387,8 @@ def test_train_one_fold_batch_payload_includes_fold_lr_grad_norm() -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -386,8 +430,8 @@ def test_train_one_fold_stop_event_halts_and_flags_stopped() -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -414,8 +458,8 @@ def test_train_one_fold_save_event_triggers_callback_once_then_clears() -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -442,10 +486,10 @@ def test_train_all_folds_walks_folds_and_emits_wire_events(tmp_path: object) -> 
     from src.data.walk_forward import Fold
     from src.predictor.training import train_all_folds
 
-    feats, ts = _synthetic(500)
+    feats, ts = _synthetic(_N2)
     folds = [
-        Fold(0, 0, 150, 150, 250, 250, 300),
-        Fold(1, 150, 300, 300, 400, 400, 500),
+        Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N),
+        Fold(1, _TR, 2 * _TR, 2 * _TR, 2 * _TR + _VA, 2 * _TR + _VA, _N2),
     ]
     events: list[dict[str, object]] = []
 
@@ -485,8 +529,8 @@ def test_window_loader_matches_dataset_windowing_and_scaling() -> None:
     from src.data.walk_forward import Fold
     from src.predictor.training import build_fold_loaders
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -510,8 +554,8 @@ def test_window_loader_drop_last_preserved() -> None:
     from src.data.walk_forward import Fold
     from src.predictor.training import build_fold_loaders
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     _, train_loader, _ = build_fold_loaders(feats, ts, fold, lookback=_LOOKBACK, batch_size=8)
     seen = sum(int(xb.shape[0]) for xb, _ in train_loader)
     n_windows = len(train_loader.dataset)  # type: ignore[attr-defined]
@@ -528,8 +572,8 @@ def test_train_one_fold_throttles_batch_logging() -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(400)
-    fold = Fold(0, 0, 250, 250, 350, 350, 400)
+    feats, ts = _synthetic(_N_BIG)
+    fold = Fold(0, 0, _TR_BIG, _TR_BIG, _TR_BIG + _VA, _TR_BIG + _VA, _N_BIG)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=8
     )
@@ -566,8 +610,8 @@ def test_lr_decays_on_val_plateau(monkeypatch: pytest.MonkeyPatch) -> None:
     from src.predictor.model import PatchTST
     from src.predictor.training import build_fold_loaders, train_one_fold
 
-    feats, ts = _synthetic(300)
-    fold = Fold(0, 0, 150, 150, 250, 250, 300)
+    feats, ts = _synthetic(_N)
+    fold = Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)
     scaler, train_loader, val_loader = build_fold_loaders(
         feats, ts, fold, lookback=_LOOKBACK, batch_size=16
     )
@@ -609,10 +653,10 @@ def test_train_all_folds_stops_early_when_stop_event_set(tmp_path: object) -> No
     from src.data.walk_forward import Fold
     from src.predictor.training import train_all_folds
 
-    feats, ts = _synthetic(500)
+    feats, ts = _synthetic(_N2)
     folds = [
-        Fold(0, 0, 150, 150, 250, 250, 300),
-        Fold(1, 150, 300, 300, 400, 400, 500),
+        Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N),
+        Fold(1, _TR, 2 * _TR, 2 * _TR, 2 * _TR + _VA, 2 * _TR + _VA, _N2),
     ]
     stop_event = threading.Event()
     events: list[dict[str, object]] = []
@@ -646,10 +690,10 @@ def test_train_all_folds_promotes_finished_checkpoints_on_completion(
     from src.data.walk_forward import Fold
     from src.predictor.training import train_all_folds
 
-    feats, ts = _synthetic(500)
+    feats, ts = _synthetic(_N2)
     folds = [
-        Fold(0, 0, 150, 150, 250, 250, 300),
-        Fold(1, 150, 300, 300, 400, 400, 500),
+        Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N),
+        Fold(1, _TR, 2 * _TR, 2 * _TR, 2 * _TR + _VA, 2 * _TR + _VA, _N2),
     ]
     ckpt_dir = Path(str(tmp_path)) / "checkpoints"
     finished_dir = Path(str(tmp_path)) / "finished"
@@ -677,10 +721,10 @@ def test_train_all_folds_does_not_promote_on_user_stop(tmp_path: object) -> None
     from src.data.walk_forward import Fold
     from src.predictor.training import train_all_folds
 
-    feats, ts = _synthetic(500)
+    feats, ts = _synthetic(_N2)
     folds = [
-        Fold(0, 0, 150, 150, 250, 250, 300),
-        Fold(1, 150, 300, 300, 400, 400, 500),
+        Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N),
+        Fold(1, _TR, 2 * _TR, 2 * _TR, 2 * _TR + _VA, 2 * _TR + _VA, _N2),
     ]
     ckpt_dir = Path(str(tmp_path)) / "checkpoints"
     finished_dir = Path(str(tmp_path)) / "finished"
@@ -715,8 +759,8 @@ def test_train_all_folds_partial_promotion_warns_but_still_completes(
     import src.predictor.training as training_mod
     from src.data.walk_forward import Fold
 
-    feats, ts = _synthetic(500)
-    folds = [Fold(0, 0, 150, 150, 250, 250, 300)]
+    feats, ts = _synthetic(_N2)
+    folds = [Fold(0, 0, _TR, _TR, _TR + _VA, _TR + _VA, _N)]
     finished_dir = Path(str(tmp_path)) / "finished"
     events: list[dict[str, object]] = []
 
