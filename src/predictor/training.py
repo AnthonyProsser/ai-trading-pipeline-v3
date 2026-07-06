@@ -510,7 +510,8 @@ def evaluate_directional_accuracy(
     dev = torch.device(device)
     model.to(dev)
     preds, targets = _collect_predictions(model, loader, dev)
-    return directional_accuracy(preds, targets)
+    # Final horizon step only: the cumulative move a hold-to-horizon trade spans.
+    return directional_accuracy(preds[:, -1], targets[:, -1])
 
 
 def scaler_sha(scaler: PerFoldMinMaxScaler) -> str:

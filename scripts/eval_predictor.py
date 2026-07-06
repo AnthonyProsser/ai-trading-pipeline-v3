@@ -38,11 +38,17 @@ if str(REPO_ROOT) not in sys.path:
 
 import torch
 
-from constants import DATA, PREDICTOR
+from constants import BENCHMARK, DATA, EXECUTION, PREDICTOR
 from src.benchmark.metrics import (
     excursion_metrics,
     statistical_metrics,
     target_to_model_space,
+)
+from src.benchmark.trading_sim import (
+    extract_signals,
+    ledger_stats,
+    random_entry_null,
+    simulate_trades,
 )
 from src.data.feature_pipeline import compute_features
 from src.data.validator import validate_candles
@@ -98,6 +104,44 @@ def _gather(
     return torch.cat(preds), torch.cat(targets)
 
 
+def fixed_instrument_summary(
+    pred: torch.Tensor, target_raw: torch.Tensor, semantics: str
+) -> dict[str, float]:
+    """Simulated net-of-fee PnL of the benchmark app's ONE fixed trading instrument.
+
+    Scores the bake-off's VAL-slice gather (consecutive origins, shuffle=False) with the
+    exact rule the leaderboard uses (src/benchmark/trading_sim.py): enter when the
+    FINAL-step cumulative close |q50| clears EXECUTION.FEE_THRESHOLD and [q10, q90] is
+    one-sided; hold the tensor's own horizon, non-overlapping; one round-trip fee per
+    trade; random-entry null at matched trade frequency for the p-value. The hold length
+    is ``pred.shape[1]`` — the forecast horizon the tensors actually carry — so the
+    summary stays correct under any HORIZON constant.
+    """
+    pred_cum = pred if semantics == "cumulative_logret" else torch.cumsum(pred, dim=1)
+    realized_final = (
+        torch.cumsum(target_raw, dim=1)[:, -1, DATA.FEATURE_NAMES.index("close_logret")]
+        .double()
+        .numpy()
+    )
+    horizon = int(pred.shape[1])
+    signals = extract_signals(pred_cum, fee_threshold=EXECUTION.FEE_THRESHOLD)
+    ledger = simulate_trades(
+        signals, realized_final, horizon=horizon, fee=EXECUTION.FEE_THRESHOLD
+    )
+    stats = ledger_stats(ledger.net_returns, ledger.gross_returns)
+    stats.update(random_entry_null(
+        n_origins=int(pred.shape[0]),
+        trade_count=int(ledger.net_returns.size),
+        realized_final=realized_final,
+        horizon=horizon,
+        fee=EXECUTION.FEE_THRESHOLD,
+        draws=BENCHMARK.NULL_DRAWS,
+        seed=BENCHMARK.NULL_SEED,
+        model_net=float(stats["net_return"]),
+    ))
+    return stats
+
+
 def train_and_evaluate_seed(
     *,
     features: npt.NDArray[np.float64],
@@ -143,6 +187,7 @@ def train_and_evaluate_seed(
     result = {
         "statistical": statistical_metrics(pred, target_model),
         "economic": excursion_metrics(pred, target_raw, SEMANTICS),
+        "trading": fixed_instrument_summary(pred, target_raw, SEMANTICS),
         "timing": {
             "wall_seconds": elapsed,
             "seconds_per_epoch": elapsed / epochs,

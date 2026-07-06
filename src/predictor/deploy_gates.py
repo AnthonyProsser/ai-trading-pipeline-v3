@@ -86,15 +86,26 @@ def evaluate_deploy_gates(
     *,
     train_time_q90_coverage: float,
     fee_threshold: float = EXECUTION.FEE_THRESHOLD,
+    da_pred: torch.Tensor | None = None,
+    da_target: torch.Tensor | None = None,
 ) -> DeployGateResult:
     """Compute all three gates and whether they pass simultaneously.
 
     A NaN directional accuracy (no tradeable predictions) fails gate (b): ``nan > x`` is
     False, so the checkpoint does not deploy.
+
+    ``da_pred``/``da_target`` restrict gate (b) to a sub-tensor — collectors with a
+    horizon axis pass the FINAL-step slice, the cumulative move a hold-to-horizon trade
+    actually spans — while coverage/calibration keep scoring the full path. When omitted,
+    DA scores the same tensors as the other gates (pure-comparison behaviour unchanged).
     """
     coverage = q90_coverage(pred, target)
     coverage_delta = coverage - train_time_q90_coverage
-    da = directional_accuracy(pred, target, fee_threshold)
+    da = directional_accuracy(
+        pred if da_pred is None else da_pred,
+        target if da_target is None else da_target,
+        fee_threshold,
+    )
     calibration = calibration_rate(pred, target)
 
     coverage_pass = abs(coverage_delta) <= PREDICTOR.DEPLOY_GATE_COVERAGE_TOLERANCE

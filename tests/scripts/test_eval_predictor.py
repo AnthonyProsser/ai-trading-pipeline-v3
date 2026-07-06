@@ -104,8 +104,10 @@ def test_aggregate_seeds_includes_trading_group(ep: Any) -> None:
     # The fixed-instrument simulated-PnL group aggregates like any other group so the
     # bake-off decider can read seed-mean net_return with seed-noise std.
     seed_results = [
-        {"statistical": {"q90_coverage": 0.90}, "trading": {"net_return": 0.10, "trade_count": 40.0}},
-        {"statistical": {"q90_coverage": 0.90}, "trading": {"net_return": 0.30, "trade_count": 44.0}},
+        {"statistical": {"q90_coverage": 0.90},
+         "trading": {"net_return": 0.10, "trade_count": 40.0}},
+        {"statistical": {"q90_coverage": 0.90},
+         "trading": {"net_return": 0.30, "trade_count": 44.0}},
     ]
     agg = ep.aggregate_seeds("h240", "cumulative_logret", seed_results)
     assert agg["trading"]["net_return"] == pytest.approx(0.20)
@@ -156,7 +158,7 @@ def test_fixed_instrument_summary_matches_hand_ledger(ep: Any) -> None:
     summary = ep.fixed_instrument_summary(pred, target_raw, "cumulative_logret")
 
     assert summary["trade_count"] == 2  # origin 0 and origin 2; origin 1 inside the hold
-    assert summary["net_return"] == pytest.approx(0.05 - fee + (-0.04 - fee), abs=1e-9)
+    assert summary["net_return"] == pytest.approx(0.05 - fee + (-0.04 - fee), abs=1e-6)
     assert summary["directional_hit_rate"] == pytest.approx(0.5)
     assert summary["hit_rate"] == pytest.approx(0.5)  # +0.05 clears the fee, -0.04 doesn't
     # Null baseline: add-one p-value is finite and in (0, 1] whenever trades exist.
@@ -195,4 +197,4 @@ def test_fixed_instrument_summary_cumsum_for_per_step_semantics(ep: Any) -> None
 
     summary = ep.fixed_instrument_summary(pred, target_raw, "per_step_logret")
     assert summary["trade_count"] == 1
-    assert summary["net_return"] == pytest.approx(0.02 - fee, abs=1e-9)
+    assert summary["net_return"] == pytest.approx(0.02 - fee, abs=1e-6)

@@ -56,7 +56,9 @@ def statistical_metrics(pred: torch.Tensor, target_model_space: torch.Tensor) ->
     return {
         "q90_coverage": q90_coverage(pred, target_model_space),
         "calibration_rate": calibration_rate(pred, target_model_space),
-        "directional_accuracy": directional_accuracy(pred, target_model_space),
+        # DA over the FINAL horizon step only — the cumulative move a hold-to-horizon
+        # trade actually spans (the quantity the fixed instrument acts on).
+        "directional_accuracy": directional_accuracy(pred[:, -1], target_model_space[:, -1]),
         "sharpness_close": sharpness,
         "pinball": float(pinball_loss(pred, target_model_space)),
     }

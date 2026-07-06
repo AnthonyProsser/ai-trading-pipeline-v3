@@ -212,7 +212,12 @@ def run(args: argparse.Namespace) -> int:
         model, scaler, features, lookback=args.lookback, batch_size=PREDICTOR.SMOKE_BATCH_SIZE
     )
 
-    result = evaluate_deploy_gates(pred, target, train_time_q90_coverage=train_coverage)
+    # DA gate on the final horizon step only (the traded quantity); coverage/calibration
+    # keep scoring the whole forecast path.
+    result = evaluate_deploy_gates(
+        pred, target, train_time_q90_coverage=train_coverage,
+        da_pred=pred[:, -1], da_target=target[:, -1],
+    )
     print(
         f"[gates] coverage={result.q90_coverage:.4f} (delta {result.coverage_delta:+.4f}) "
         f"DA={result.directional_accuracy:.4f} calibration={result.calibration_rate:.4f}"
