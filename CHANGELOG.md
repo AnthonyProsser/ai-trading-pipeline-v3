@@ -13,6 +13,12 @@ Format:
 
 ---
 
+## 2026-07-06 — Deploy gate (b): directional accuracy scores the final horizon step only
+- deploy_gates: DA sign-agreement over all horizon steps (cumulative space) → final horizon step only, the move a hold-to-horizon trade spans and the quantity the benchmark's fixed instrument trades. Coverage/calibration gates unchanged (whole path). Collectors slice `[:, -1]`; `evaluate_deploy_gates` gains backward-compatible `da_pred`/`da_target` overrides.
+- benchmark_trading_rule: codified the horizon-sweep exception — `scripts/eval_predictor.py::fixed_instrument_summary` reads the hold length from `pred.shape[1]` (sweep candidates train under edited horizon constants); production scoring keeps `PREDICTOR.HORIZON`.
+- Reason: preparation for the horizon sweep (0/78 models profitable at HORIZON=15; mean loss = exactly the round-trip fee per trade). At longer horizons the all-steps DA counts many intermediate fee-clearing coordinates, silently redefining the 53.5% gate; final-step-only keeps the gate pinned to the traded quantity at any horizon. User-approved 2026-07-06.
+- Source: conversation 2026-07-06 (horizon-sweep plan), decisions-auditor pre-merge finding.
+
 ## 2026-07-04 — Merge reconciliation: phase-15-controls-fix × benchmark-app terminal state
 - training_ui_controls / benchmark_finished_models_source: both branches independently changed `train_all_folds`'s terminal SSE status on natural completion — `phase-15-controls-fix` introduced `state:"done"`, `benchmark-app` (merged via PR #21) independently introduced `state:"completed"` carrying a `promoted` count. Reconciled to a single terminal state: `state:"done"` (unchanged from `phase-15-controls-fix`, since `TrainingRunner._TERMINAL_STATES` and `app.js`'s button-render/color logic were already wired only for `"done"` — `"completed"` was never actually recognized as terminal by either), now also carrying the `promoted` count from the benchmark-app promotion logic. `"completed"` retired; no behavior lost, only the wire-name unified.
 - Reason: merging `phase-15-controls-fix` into `main` after `benchmark-app` had already landed there via GitHub PR #21 surfaced a genuine conflict in `src/predictor/training.py`'s final `emit(...)` call (plus matching conflicts in `static/training_ui/app.js`, `tests/predictor/test_training.py`, `training-dashboard.md`) — both sides touched the same terminal-status line with different designs.

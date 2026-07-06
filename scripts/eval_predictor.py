@@ -117,6 +117,11 @@ def fixed_instrument_summary(
     is ``pred.shape[1]`` — the forecast horizon the tensors actually carry — so the
     summary stays correct under any HORIZON constant.
     """
+    if pred.shape[0] != target_raw.shape[0] or pred.shape[1] != target_raw.shape[1]:
+        raise ValueError(
+            f"pred {tuple(pred.shape)} and target_raw {tuple(target_raw.shape)} must share "
+            f"(N, H) leading dims"
+        )
     pred_cum = pred if semantics == "cumulative_logret" else torch.cumsum(pred, dim=1)
     realized_final = (
         torch.cumsum(target_raw, dim=1)[:, -1, DATA.FEATURE_NAMES.index("close_logret")]

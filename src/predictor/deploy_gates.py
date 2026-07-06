@@ -98,6 +98,9 @@ def evaluate_deploy_gates(
     horizon axis pass the FINAL-step slice, the cumulative move a hold-to-horizon trade
     actually spans — while coverage/calibration keep scoring the full path. When omitted,
     DA scores the same tensors as the other gates (pure-comparison behaviour unchanged).
+    ``da_pred``/``da_target`` follow the same (..., NUM_OUTPUT_DIMS, NUM_QUANTILES) /
+    (..., NUM_OUTPUT_DIMS) layout as ``pred``/``target`` (minus the horizon axis) and
+    must live on the same device.
     """
     coverage = q90_coverage(pred, target)
     coverage_delta = coverage - train_time_q90_coverage
