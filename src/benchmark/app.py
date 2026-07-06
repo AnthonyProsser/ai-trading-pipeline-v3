@@ -33,6 +33,7 @@ from src.benchmark.registry import (
     scan_checkpoints,
     set_display_name,
 )
+from src.benchmark.trading_sim import profitability_grade
 from src.training_ui.exporter import read_fold_records
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -129,6 +130,143 @@ def create_runner() -> BenchmarkRunner:
     )
 
 
+# --- leaderboard aggregation ------------------------------------------------------
+#
+# The board is grouped by training RUN: fold-checkpoints that share a (git_sha,
+# constants_sha8) — same code + same frozen constants — are siblings of one walk-forward
+# run (the run tag's scaler segment varies per fold, so it is excluded from the key).
+# Each run row aggregates its folds ("70/78 profitable") and nests them as a drill-down
+# ranked by per-trade expectancy. See DECISIONS.md `benchmark_run_grouping`.
+
+
+def _metric(row: dict[str, object], group: str, key: str) -> float | None:
+    """A finite float at row[group][key], else None (missing block / non-finite)."""
+    block = row.get(group)
+    v = block.get(key) if isinstance(block, dict) else None
+    return float(v) if isinstance(v, (int, float)) and math.isfinite(v) else None
+
+
+def _expectancy_of(row: dict[str, object]) -> float | None:
+    """Mean net-of-fee log-return per trade (net_return / trade_count). None when the
+    model made no trades (expectancy undefined) or the numbers are missing/non-finite."""
+    net = _metric(row, "trading", "net_return")
+    count = _metric(row, "trading", "trade_count")
+    if net is None or count is None or count == 0:
+        return None
+    exp = net / count
+    return exp if math.isfinite(exp) else None
+
+
+def _grade_of(row: dict[str, object]) -> str:
+    """Task 1's three-state green grade from the persisted result numbers. Missing
+    numbers -> NaN/0, which profitability_grade reads as 'insufficient'."""
+    net = _metric(row, "trading", "net_return")
+    p = _metric(row, "baselines", "p_value")
+    count = _metric(row, "trading", "trade_count")
+    return profitability_grade(
+        float("nan") if net is None else net,
+        0 if count is None else int(count),
+        float("nan") if p is None else p,
+    )
+
+
+def _member_sort_key(row: dict[str, object]) -> tuple[float, float]:
+    """Within-run rank: per-trade expectancy desc, tie-broken by directional accuracy
+    desc; missing values sort last on either key (DECISIONS `benchmark_leaderboard_ranking`)."""
+    exp = _expectancy_of(row)
+    da = _metric(row, "statistical", "directional_accuracy")
+    return (
+        -exp if exp is not None else float("inf"),
+        -da if da is not None else float("inf"),
+    )
+
+
+def _run_sort_key(run: dict[str, object]) -> tuple[float, float]:
+    """Run order: profitable-fold fraction desc, tie-broken by mean expectancy desc;
+    null aggregates sort last on either key."""
+    frac = run["profitable_fraction"]
+    mean_exp = run["mean_expectancy"]
+    return (
+        -frac if isinstance(frac, float) else float("inf"),
+        -mean_exp if isinstance(mean_exp, float) else float("inf"),
+    )
+
+
+def build_leaderboard(models: list[dict[str, object]]) -> dict[str, object]:
+    """Group list_models() output into per-run rows with nested, ranked fold members.
+    Runs with zero benchmarked folds are dropped (no metrics to show). Returns the
+    pre-json_safe payload {"runs": [...]}."""
+    groups: dict[tuple[object, object], list[dict[str, object]]] = {}
+    for m in models:
+        groups.setdefault((m["git_sha"], m["constants_sha8"]), []).append(m)
+
+    run_rows: list[dict[str, object]] = []
+    for (git_sha, constants_sha8), group in groups.items():
+        members: list[dict[str, object]] = []
+        for m in group:
+            if not m["has_benchmark"]:
+                continue
+            result = m["result"]
+            assert isinstance(result, dict)
+            row: dict[str, object] = {
+                "stem": m["stem"],
+                "display_name": m["display_name"],
+                "fold_index": m["fold_index"],
+                "trading": result.get("trading", {}),
+                "baselines": result.get("baselines", {}),
+                "statistical": result.get("statistical", {}),
+                "economic": result.get("economic", {}),
+                "eval": result.get("eval", {}),
+                "benchmarked_at_utc": result.get("benchmarked_at_utc"),
+            }
+            row["expectancy"] = _expectancy_of(row)
+            row["profitability"] = _grade_of(row)
+            members.append(row)
+
+        if not members:  # a run with no benchmarked folds has no board presence
+            continue
+
+        members.sort(key=_member_sort_key)
+        for rank, row in enumerate(members, start=1):
+            row["rank"] = rank
+
+        n_benchmarked = len(members)
+        n_profitable = sum(r["profitability"] == "profitable" for r in members)
+        n_not_profitable = sum(r["profitability"] == "not_profitable" for r in members)
+        n_insufficient = sum(r["profitability"] == "insufficient" for r in members)
+        exps = [e for e in (r["expectancy"] for r in members) if isinstance(e, float)]
+        das = [
+            d
+            for d in (_metric(r, "statistical", "directional_accuracy") for r in members)
+            if d is not None
+        ]
+        nets = [
+            v for v in (_metric(r, "trading", "net_return") for r in members)
+            if v is not None
+        ]
+        run_rows.append(
+            {
+                "git_sha": git_sha,
+                "constants_sha8": constants_sha8,
+                "n_checkpoints": len(group),
+                "n_benchmarked": n_benchmarked,
+                "n_profitable": n_profitable,
+                "n_not_profitable": n_not_profitable,
+                "n_insufficient": n_insufficient,
+                # Denominator = benchmarked folds; 'insufficient' counts here but never in
+                # the numerator (a fold that trades too little is not evidence of edge).
+                "profitable_fraction": n_profitable / n_benchmarked,
+                "mean_expectancy": sum(exps) / len(exps) if exps else None,
+                "mean_da": sum(das) / len(das) if das else None,
+                "mean_net_return": sum(nets) / len(nets) if nets else None,
+                "models": members,
+            }
+        )
+
+    run_rows.sort(key=_run_sort_key)
+    return {"runs": run_rows}
+
+
 class RenameBody(BaseModel):
     display_name: str
 
@@ -176,77 +314,10 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
 
     @app.get("/api/leaderboard")
     def get_leaderboard() -> dict[str, object]:
+        # One row per training run (grouped by git_sha + constants_sha8), each nesting
+        # its fold-checkpoints ranked by per-trade expectancy; see build_leaderboard.
         models = list_models(runner.checkpoint_dir, runner.benchmark_dir)
-        rows: list[dict[str, object]] = []
-        for m in models:
-            if not m["has_benchmark"]:
-                continue
-            result = m["result"]
-            assert isinstance(result, dict)
-            rows.append(
-                {
-                    "stem": m["stem"],
-                    "display_name": m["display_name"],
-                    "fold_index": m["fold_index"],
-                    "git_sha": m["git_sha"],
-                    "constants_sha8": m["constants_sha8"],
-                    "trading": result.get("trading", {}),
-                    "baselines": result.get("baselines", {}),
-                    "statistical": result.get("statistical", {}),
-                    "economic": result.get("economic", {}),
-                    "eval": result.get("eval", {}),
-                    "benchmarked_at_utc": result.get("benchmarked_at_utc"),
-                }
-            )
-
-        def _num(row: dict[str, object], group: str, key: str) -> float | None:
-            block = row.get(group)
-            v = block.get(key) if isinstance(block, dict) else None
-            return float(v) if isinstance(v, (int, float)) and math.isfinite(v) else None
-
-        def net_of(row: dict[str, object]) -> float | None:
-            return _num(row, "trading", "net_return")
-
-        # The model forecasts price, so the board ranks by forecast ACCURACY on the
-        # out-of-sample fold-test slice: directional accuracy desc, tie-broken by pinball
-        # (the quantile scoring rule) asc. Both are trade-count-independent, so a model no
-        # longer climbs merely by trading less. Missing values sort last either way.
-        def rank_key(row: dict[str, object]) -> tuple[float, float]:
-            da = _num(row, "statistical", "directional_accuracy")
-            pinball = _num(row, "statistical", "pinball")
-            return (
-                -da if da is not None else float("inf"),
-                pinball if pinball is not None else float("inf"),
-            )
-
-        rows.sort(key=rank_key)
-        for rank, row in enumerate(rows, start=1):
-            row["rank"] = rank
-
-        groups: dict[tuple[object, object], list[dict[str, object]]] = {}
-        for row in rows:
-            groups.setdefault((row["git_sha"], row["constants_sha8"]), []).append(row)
-        run_rows: list[dict[str, object]] = []
-        for (git_sha, constants_sha8), members in groups.items():
-            das = [d for d in (_num(r, "statistical", "directional_accuracy")
-                               for r in members) if d is not None]
-            nets = [v for v in (net_of(r) for r in members) if v is not None]
-            run_rows.append(
-                {
-                    "git_sha": git_sha,
-                    "constants_sha8": constants_sha8,
-                    "n_models": len(members),
-                    "mean_da": sum(das) / len(das) if das else None,
-                    "mean_net_return": sum(nets) / len(nets) if nets else None,
-                }
-            )
-        run_rows.sort(
-            key=lambda g: g["mean_da"]
-            if isinstance(g["mean_da"], float) else float("-inf"),
-            reverse=True,
-        )
-
-        safe = json_safe({"models": rows, "runs": run_rows})
+        safe = json_safe(build_leaderboard(models))
         assert isinstance(safe, dict)
         return safe
 
@@ -261,6 +332,8 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
             "quantiles": list(PREDICTOR.QUANTILES),
             "null_draws": BENCHMARK.NULL_DRAWS,
             "null_significance_level": BENCHMARK.NULL_SIGNIFICANCE_LEVEL,
+            "profitable_p_value_max": BENCHMARK.PROFITABLE_P_VALUE_MAX,
+            "profitable_min_trades": BENCHMARK.PROFITABLE_MIN_TRADES,
             "alert_auto_dismiss_seconds": TRAINING_UI.ALERT_AUTO_DISMISS_SECONDS,
             "deploy_gate_da_threshold": PREDICTOR.DEPLOY_GATE_DA_THRESHOLD,
             "deploy_gate_cal_lower": PREDICTOR.DEPLOY_GATE_CAL_LOWER,

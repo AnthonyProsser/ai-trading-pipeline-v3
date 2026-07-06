@@ -6,6 +6,12 @@
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "uvicorn", "src.training_ui.app:app", "--host", "127.0.0.1", "--port", "8001"],
       "port": 8001
+    },
+    {
+      "name": "benchmark-app",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "uvicorn", "src.benchmark.app:app", "--host", "127.0.0.1", "--port", "8002"],
+      "port": 8002
     }
   ]
 }

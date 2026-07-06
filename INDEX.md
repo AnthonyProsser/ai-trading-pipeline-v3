@@ -108,7 +108,7 @@ The Training Dashboard moved to Phase 1.5. This phase builds the Trading Dashboa
 | Benchmark models by simulated net-of-fee PnL (app) | `DECISIONS.md` (`benchmark_*`), `src/benchmark/app.py`, `src/benchmark/engine.py` |
 | Change the benchmark trading rule or null baselines | `DECISIONS.md` (`benchmark_trading_rule`), `constants.py`, `src/benchmark/trading_sim.py` |
 | Promote finished models to the benchmark (`FINISHED_DIR`) | `DECISIONS.md` (`benchmark_finished_models_source`), `constants.py`, `src/predictor/training.py` (`train_all_folds`), `src/training_ui/app.py` |
-| Change the leaderboard ranking metric | `DECISIONS.md` (`benchmark_leaderboard_ranking`), `src/benchmark/app.py` (`get_leaderboard`), `static/benchmark/` |
+| Change the leaderboard ranking metric or run grouping | `DECISIONS.md` (`benchmark_leaderboard_ranking`, `benchmark_run_grouping`), `src/benchmark/app.py` (`build_leaderboard`), `static/benchmark/` |
 | Join benchmark + training data for a model (analysis) | `DECISIONS.md` (`benchmark_analysis_endpoint`), `src/benchmark/app.py` (`/api/analysis`), `src/training_ui/exporter.py` |
 | Run the predictor training bake-off (capped seeds) | `scripts/eval_predictor.py`, `src/benchmark/metrics.py` |
 | Run the permutation test (pre-live gate) | `splits-validation.md`, `scripts/permutation_test.py` |
