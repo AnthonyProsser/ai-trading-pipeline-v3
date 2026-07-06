@@ -38,9 +38,10 @@
       <div class="panel-title">
         <h2>Leaderboard</h2>
         <span class="panel-sub">one row per training run (git sha + constants hash — folds
-          of one walk-forward run), ranked by the share of folds graded profitable
-          (tie-break: mean per-trade expectancy). Expand a run to rank its folds by
-          expectancy (tie-break: directional accuracy)</span>
+          of one walk-forward run). Only fully-benchmarked runs are scored and ranked by
+          the share of folds graded profitable (tie-break: mean per-trade expectancy);
+          runs with folds still pending sit at the bottom with a “Benchmark all”. Expand a
+          run to rank its folds by expectancy (tie-break: directional accuracy)</span>
       </div>
       <div class="table-scroll">
         <table id="leaderboard-table">

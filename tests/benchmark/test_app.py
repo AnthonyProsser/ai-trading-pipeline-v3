@@ -141,6 +141,57 @@ def test_runner_error_in_job_broadcasts_alert_and_recovers(tmp_path: Path) -> No
     _wait_for_state(runner, "idle")
 
 
+def test_runner_batch_runs_all_stems_in_order(tmp_path: Path) -> None:
+    seen: list[str] = []
+
+    def fake(r: BenchmarkRunner, stem: str) -> None:
+        seen.append(stem)
+
+    runner = _runner(tmp_path, run_benchmark=fake)
+    assert runner.start_batch([_STEM, _STEM2, _STEM3]) is True
+    _wait_for_state(runner, "idle")
+    assert seen == [_STEM, _STEM2, _STEM3]
+
+
+def test_runner_batch_continues_past_a_failing_stem(tmp_path: Path) -> None:
+    # One fold raising must not abort the rest of the batch (best-effort per stem).
+    seen: list[str] = []
+
+    def fake(r: BenchmarkRunner, stem: str) -> None:
+        seen.append(stem)
+        if stem == _STEM2:
+            raise RuntimeError("boom")
+
+    runner = _runner(tmp_path, run_benchmark=fake)
+    q = runner.subscribe()
+    assert runner.start_batch([_STEM, _STEM2, _STEM3]) is True
+    _wait_for_state(runner, "idle")
+    assert seen == [_STEM, _STEM2, _STEM3]
+    payloads = []
+    while not q.empty():
+        payloads.append(q.get_nowait())
+    assert any(p.get("type") == "alert" and p.get("level") == "error" for p in payloads)
+
+
+def test_runner_batch_rejected_while_running(tmp_path: Path) -> None:
+    gate = threading.Event()
+
+    def fake(r: BenchmarkRunner, stem: str) -> None:
+        gate.wait(timeout=2)
+
+    runner = _runner(tmp_path, run_benchmark=fake)
+    assert runner.start_batch([_STEM, _STEM2]) is True
+    assert runner.start_batch([_STEM3]) is False
+    assert runner.start(_STEM3) is False  # single-stem start shares the same guard
+    gate.set()
+
+
+def test_runner_start_batch_empty_is_false(tmp_path: Path) -> None:
+    runner = _runner(tmp_path)
+    assert runner.start_batch([]) is False
+    assert runner.state == "idle"
+
+
 def test_runner_broadcast_fans_out_and_unsubscribe_stops(tmp_path: Path) -> None:
     runner = _runner(tmp_path)
     q1 = runner.subscribe()
@@ -238,6 +289,78 @@ def test_http_start_while_running_is_409(tmp_path: Path) -> None:
 
     assert client.post(f"/api/benchmark/{_STEM}/start").status_code == 202
     assert client.post(f"/api/benchmark/{_STEM2}/start").status_code == 409
+    gate.set()
+
+
+# --- batch "benchmark all" (one run's remaining compatible folds) -------------------
+
+def test_http_run_benchmark_enqueues_pending_compatible_folds(tmp_path: Path) -> None:
+    # A run with three folds, one already benchmarked -> "Benchmark all" enqueues the
+    # other two (compatible + not-yet-benchmarked), server-derived from the run key.
+    started: list[str] = []
+
+    def fake(r: BenchmarkRunner, stem: str) -> None:
+        started.append(stem)
+        write_benchmark_result(
+            r.benchmark_dir, stem, {"trading": {"net_return": 0.01, "trade_count": 30}}
+        )
+
+    runner = _runner(tmp_path, run_benchmark=fake)
+    for stem in (_STEM, _STEM2, _STEM3):
+        _write_fake_checkpoint(runner.checkpoint_dir, stem)
+    write_benchmark_result(
+        runner.benchmark_dir, _STEM, {"trading": {"net_return": 0.02, "trade_count": 30}}
+    )
+    client = TestClient(create_app(runner))
+
+    r = client.post(
+        "/api/benchmark/run/start",
+        json={"git_sha": "4d460ed", "constants_sha8": "487b9e2e"},
+    )
+    assert r.status_code == 202
+    assert sorted(r.json()["stems"]) == sorted([_STEM2, _STEM3])
+    _wait_for_state(runner, "idle")
+    assert sorted(started) == sorted([_STEM2, _STEM3])
+
+
+def test_http_run_benchmark_unknown_run_is_404(tmp_path: Path) -> None:
+    client = TestClient(create_app(_runner(tmp_path)))
+    r = client.post(
+        "/api/benchmark/run/start",
+        json={"git_sha": "nope", "constants_sha8": "deadbeef"},
+    )
+    assert r.status_code == 404
+
+
+def test_http_run_benchmark_nothing_pending_is_409(tmp_path: Path) -> None:
+    # Every compatible fold already benchmarked -> nothing to enqueue.
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    write_benchmark_result(runner.benchmark_dir, _STEM, _profitable_result())
+    client = TestClient(create_app(runner))
+    r = client.post(
+        "/api/benchmark/run/start",
+        json={"git_sha": "4d460ed", "constants_sha8": "487b9e2e"},
+    )
+    assert r.status_code == 409
+
+
+def test_http_run_benchmark_while_running_is_409(tmp_path: Path) -> None:
+    gate = threading.Event()
+
+    def fake(r: BenchmarkRunner, stem: str) -> None:
+        gate.wait(timeout=2)
+
+    runner = _runner(tmp_path, run_benchmark=fake)
+    for stem in (_STEM, _STEM2):
+        _write_fake_checkpoint(runner.checkpoint_dir, stem)
+    client = TestClient(create_app(runner))
+    assert client.post(f"/api/benchmark/{_STEM}/start").status_code == 202
+    r = client.post(
+        "/api/benchmark/run/start",
+        json={"git_sha": "4d460ed", "constants_sha8": "487b9e2e"},
+    )
+    assert r.status_code == 409
     gate.set()
 
 
@@ -386,19 +509,80 @@ def test_http_leaderboard_insufficient_in_denominator_never_numerator(tmp_path: 
     assert run["profitable_fraction"] == 1 / 3
 
 
-def test_http_leaderboard_unbenchmarked_count_but_zero_run_absent(tmp_path: Path) -> None:
-    # Run A has 2 checkpoints, only 1 benchmarked -> n_checkpoints 2, n_benchmarked 1.
-    # Run B has a checkpoint but NO benchmark result -> it does not appear on the board.
+# --- completeness gating: only fully-benchmarked runs are scored -------------------
+#
+# A run is "complete" when every one of its compatible fold-checkpoints has a benchmark
+# result. Complete runs are scored and ranked at the top; incomplete runs (partial OR
+# zero benchmarked) carry no score, sit at the bottom, and expose "Benchmark all".
+
+
+def test_http_leaderboard_partial_run_is_incomplete_and_unscored(tmp_path: Path) -> None:
+    # 2 compatible folds, only 1 benchmarked -> not complete: unscored, 1 pending.
     runner = _runner(tmp_path)
     _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
     _write_fake_checkpoint(runner.checkpoint_dir, _STEM2)
-    _write_fake_checkpoint(runner.checkpoint_dir, _RUN_B_STEM)
     write_benchmark_result(runner.benchmark_dir, _STEM, _profitable_result())
     client = TestClient(create_app(runner))
+    run = _only_run(client.get("/api/leaderboard").json())
+    assert run["complete"] is False
+    assert run["n_checkpoints"] == 2
+    assert run["n_benchmarked"] == 1
+    assert run["n_pending"] == 1
+    assert run["profitable_fraction"] is None
+    assert run["mean_expectancy"] is None
+
+
+def test_http_leaderboard_zero_benchmarked_run_appears_incomplete(tmp_path: Path) -> None:
+    # A freshly-finished run (0 benchmarked folds) now APPEARS — incomplete, at the
+    # bottom — so its "Benchmark all" is reachable. (Such runs were dropped before.)
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM2)
+    client = TestClient(create_app(runner))
+    run = _only_run(client.get("/api/leaderboard").json())
+    assert run["complete"] is False
+    assert run["n_benchmarked"] == 0
+    assert run["n_pending"] == 2
+    assert run["models"] == []
+
+
+def test_http_leaderboard_complete_run_is_scored_and_marked_complete(tmp_path: Path) -> None:
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM2)
+    write_benchmark_result(runner.benchmark_dir, _STEM, _profitable_result())
+    write_benchmark_result(runner.benchmark_dir, _STEM2, _profitable_result())
+    client = TestClient(create_app(runner))
+    run = _only_run(client.get("/api/leaderboard").json())
+    assert run["complete"] is True
+    assert run["n_pending"] == 0
+    assert run["profitable_fraction"] == 1.0
+
+
+def test_http_leaderboard_complete_runs_rank_above_incomplete(tmp_path: Path) -> None:
+    # Complete run (all folds benchmarked, scored) sorts ABOVE an incomplete run.
+    runner = _runner(tmp_path)
+    for stem in (_STEM, _STEM2):  # run 4d460ed: both benchmarked -> complete
+        _write_fake_checkpoint(runner.checkpoint_dir, stem)
+    write_benchmark_result(runner.benchmark_dir, _STEM, _profitable_result())
+    write_benchmark_result(runner.benchmark_dir, _STEM2, _profitable_result())
+    for stem in (_RUN_B_STEM, _RUN_B_STEM2):  # run bbbbbbb: 1 of 2 -> incomplete
+        _write_fake_checkpoint(runner.checkpoint_dir, stem)
+    write_benchmark_result(runner.benchmark_dir, _RUN_B_STEM, _profitable_result())
+    client = TestClient(create_app(runner))
     runs = client.get("/api/leaderboard").json()["runs"]
-    assert [r["git_sha"] for r in runs] == ["4d460ed"]  # run B absent (0 benchmarked)
-    assert runs[0]["n_checkpoints"] == 2
-    assert runs[0]["n_benchmarked"] == 1
+    assert [r["git_sha"] for r in runs] == ["4d460ed", "bbbbbbb"]
+    assert runs[0]["complete"] is True
+    assert runs[1]["complete"] is False
+
+
+def test_http_leaderboard_incompatible_only_run_absent(tmp_path: Path) -> None:
+    # A run whose only checkpoint is incompatible has nothing benchmarkable and never
+    # appears on the board (there is no "Benchmark all" that could do anything).
+    runner = _runner(tmp_path)
+    _write_fake_checkpoint(runner.checkpoint_dir, _STEM, semantics="per_step_logret")
+    client = TestClient(create_app(runner))
+    assert client.get("/api/leaderboard").json()["runs"] == []
 
 
 def test_http_leaderboard_aggregates_skip_missing_values(tmp_path: Path) -> None:
@@ -416,9 +600,10 @@ def test_http_leaderboard_aggregates_skip_missing_values(tmp_path: Path) -> None
 
 
 def test_http_leaderboard_empty_board(tmp_path: Path) -> None:
-    # No benchmarked checkpoints -> an empty runs list, still valid strict JSON.
+    # No finished checkpoints at all -> an empty runs list, still valid strict JSON.
+    # (A present-but-unbenchmarked checkpoint now yields an incomplete run, not [] —
+    #  see test_http_leaderboard_zero_benchmarked_run_appears_incomplete.)
     runner = _runner(tmp_path)
-    _write_fake_checkpoint(runner.checkpoint_dir, _STEM)  # present but not benchmarked
     client = TestClient(create_app(runner))
     payload = client.get("/api/leaderboard").json()
     assert payload["runs"] == []
