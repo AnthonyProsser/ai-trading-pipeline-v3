@@ -17,6 +17,7 @@ import queue
 import threading
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
+from typing import cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -33,6 +34,7 @@ from src.benchmark.registry import (
     scan_checkpoints,
     set_display_name,
 )
+from src.benchmark.trading_sim import profitability_grade
 from src.training_ui.exporter import read_fold_records
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -92,26 +94,47 @@ class BenchmarkRunner:
             q.put_nowait(payload)
 
     def start(self, stem: str) -> bool:
+        """Benchmark one checkpoint. A thin single-element `start_batch`."""
+        return self.start_batch([stem])
+
+    def start_batch(self, stems: list[str]) -> bool:
+        """Benchmark a list of checkpoints back-to-back on one background thread (used by
+        "Benchmark all" — every remaining fold of a run). Returns False if a job is
+        already running or the list is empty. Each stem is best-effort: one failing
+        checkpoint surfaces an alert but does not abort the rest of the batch."""
         with self._state_lock:
-            if self.state == "running":
+            if self.state == "running" or not stems:
                 return False
             self.state = "running"
-            self.current_stem = stem
-        self.broadcast({"type": "status", "state": "running", "stem": stem})
-        self._thread = threading.Thread(target=self._run, args=(stem,), daemon=True)
+            self.current_stem = stems[0]
+        self.broadcast({"type": "status", "state": "running", "stem": stems[0]})
+        self._thread = threading.Thread(
+            target=self._run_batch, args=(list(stems),), daemon=True
+        )
         self._thread.start()
         return True
 
-    def _run(self, stem: str) -> None:
+    def _run_batch(self, stems: list[str]) -> None:
         try:
-            self._run_benchmark(self, stem)
-        except Exception as exc:  # noqa: BLE001 — job boundary must not crash the server
-            self.broadcast(
-                {
-                    "type": "alert", "level": "error",
-                    "message": f"Benchmark failed — {stem}: {exc}",
-                }
-            )
+            for i, stem in enumerate(stems):
+                # A plain str-reference assignment, atomic under the GIL, so the unlocked
+                # reads in the 409 "already running (…)" handlers can't observe a torn
+                # value; it just reflects whichever fold of the batch is in flight.
+                self.current_stem = stem
+                # start_batch already broadcast `running` for stems[0] synchronously (so a
+                # client connecting between the POST returning and this thread's first tick
+                # sees `running` at once); re-broadcast only for the subsequent stems.
+                if i:
+                    self.broadcast({"type": "status", "state": "running", "stem": stem})
+                try:
+                    self._run_benchmark(self, stem)
+                except Exception as exc:  # noqa: BLE001 — one bad fold must not abort the batch
+                    self.broadcast(
+                        {
+                            "type": "alert", "level": "error",
+                            "message": f"Benchmark failed — {stem}: {exc}",
+                        }
+                    )
         finally:
             self.current_stem = None
             self.broadcast({"type": "status", "state": "idle", "stem": None})
@@ -129,8 +152,181 @@ def create_runner() -> BenchmarkRunner:
     )
 
 
+# --- leaderboard aggregation ------------------------------------------------------
+#
+# The board is grouped by training RUN: fold-checkpoints that share a (git_sha,
+# constants_sha8) — same code + same frozen constants — are siblings of one walk-forward
+# run (the run tag's scaler segment varies per fold, so it is excluded from the key).
+# Each run row aggregates its folds ("70/78 profitable") and nests them as a drill-down
+# ranked by per-trade expectancy. See DECISIONS.md `benchmark_run_grouping`.
+
+
+def _metric(row: dict[str, object], group: str, key: str) -> float | None:
+    """A finite float at row[group][key], else None (missing block / non-finite)."""
+    block = row.get(group)
+    v = block.get(key) if isinstance(block, dict) else None
+    return float(v) if isinstance(v, (int, float)) and math.isfinite(v) else None
+
+
+def _expectancy_of(row: dict[str, object]) -> float | None:
+    """Mean net-of-fee log-return per trade (net_return / trade_count). None when the
+    model made no trades (expectancy undefined) or the numbers are missing/non-finite."""
+    net = _metric(row, "trading", "net_return")
+    count = _metric(row, "trading", "trade_count")
+    if net is None or count is None or count == 0:
+        return None
+    exp = net / count
+    return exp if math.isfinite(exp) else None
+
+
+def _grade_of(row: dict[str, object]) -> str:
+    """Task 1's three-state green grade from the persisted result numbers. Missing
+    numbers -> NaN/0, which profitability_grade reads as 'insufficient'."""
+    net = _metric(row, "trading", "net_return")
+    p = _metric(row, "baselines", "p_value")
+    count = _metric(row, "trading", "trade_count")
+    return profitability_grade(
+        float("nan") if net is None else net,
+        0 if count is None else int(count),
+        float("nan") if p is None else p,
+    )
+
+
+def _member_sort_key(row: dict[str, object]) -> tuple[float, float]:
+    """Within-run rank: per-trade expectancy desc, tie-broken by directional accuracy
+    desc; missing values sort last on either key (DECISIONS `benchmark_leaderboard_ranking`)."""
+    exp = _expectancy_of(row)
+    da = _metric(row, "statistical", "directional_accuracy")
+    return (
+        -exp if exp is not None else float("inf"),
+        -da if da is not None else float("inf"),
+    )
+
+
+def _run_sort_key(run: dict[str, object]) -> tuple[float, float]:
+    """Run order: profitable-fold fraction desc, tie-broken by mean expectancy desc;
+    null aggregates sort last on either key."""
+    frac = run["profitable_fraction"]
+    mean_exp = run["mean_expectancy"]
+    return (
+        -frac if isinstance(frac, float) else float("inf"),
+        -mean_exp if isinstance(mean_exp, float) else float("inf"),
+    )
+
+
+def build_leaderboard(models: list[dict[str, object]]) -> dict[str, object]:
+    """Group list_models() output into per-run rows with nested, ranked fold members.
+
+    A run is **complete** only when every one of its compatible (benchmarkable) fold-
+    checkpoints has a benchmark result. Complete runs are SCORED and ranked at the top by
+    profitable-fold fraction. Runs still missing a benchmark on any compatible fold
+    ("incomplete" — partial OR zero benchmarked) carry no score, sort to the bottom, and
+    expose `n_pending` so the UI can offer "Benchmark all". A run with no compatible fold
+    at all (nothing benchmarkable) is dropped. Returns pre-json_safe {"runs": [...]}."""
+    groups: dict[tuple[object, object], list[dict[str, object]]] = {}
+    for m in models:
+        groups.setdefault((m["git_sha"], m["constants_sha8"]), []).append(m)
+
+    complete_rows: list[dict[str, object]] = []
+    incomplete_rows: list[dict[str, object]] = []
+    for (git_sha, constants_sha8), group in groups.items():
+        compatible = [m for m in group if m["compatible"]]
+        if not compatible:  # nothing benchmarkable -> no board presence
+            continue
+        pending = sorted(str(m["stem"]) for m in compatible if not m["has_benchmark"])
+
+        members: list[dict[str, object]] = []
+        for m in group:
+            if not m["has_benchmark"]:
+                continue
+            result = m["result"]
+            assert isinstance(result, dict)
+            row: dict[str, object] = {
+                "stem": m["stem"],
+                "display_name": m["display_name"],
+                "fold_index": m["fold_index"],
+                "trading": result.get("trading", {}),
+                "baselines": result.get("baselines", {}),
+                "statistical": result.get("statistical", {}),
+                "economic": result.get("economic", {}),
+                "eval": result.get("eval", {}),
+                "benchmarked_at_utc": result.get("benchmarked_at_utc"),
+            }
+            row["expectancy"] = _expectancy_of(row)
+            row["profitability"] = _grade_of(row)
+            members.append(row)
+
+        members.sort(key=_member_sort_key)
+        for rank, row in enumerate(members, start=1):
+            row["rank"] = rank
+
+        base: dict[str, object] = {
+            "git_sha": git_sha,
+            "constants_sha8": constants_sha8,
+            "n_checkpoints": len(group),
+            "n_compatible": len(compatible),
+            "n_benchmarked": len(members),
+            "n_pending": len(pending),
+            "complete": not pending,
+            "models": members,
+        }
+
+        if pending:
+            # Incomplete: no score — the board must never rank a run whose fold set is
+            # not fully measured. It sits at the bottom carrying a "Benchmark all" count.
+            base.update(
+                {
+                    "n_profitable": None, "n_not_profitable": None, "n_insufficient": None,
+                    "profitable_fraction": None, "mean_expectancy": None,
+                    "mean_da": None, "mean_net_return": None,
+                }
+            )
+            incomplete_rows.append(base)
+            continue
+
+        n_benchmarked = len(members)
+        n_profitable = sum(r["profitability"] == "profitable" for r in members)
+        n_not_profitable = sum(r["profitability"] == "not_profitable" for r in members)
+        n_insufficient = sum(r["profitability"] == "insufficient" for r in members)
+        exps = [e for e in (r["expectancy"] for r in members) if isinstance(e, float)]
+        das = [
+            d
+            for d in (_metric(r, "statistical", "directional_accuracy") for r in members)
+            if d is not None
+        ]
+        nets = [
+            v for v in (_metric(r, "trading", "net_return") for r in members)
+            if v is not None
+        ]
+        base.update(
+            {
+                "n_profitable": n_profitable,
+                "n_not_profitable": n_not_profitable,
+                "n_insufficient": n_insufficient,
+                # Denominator = benchmarked folds; 'insufficient' counts here but never in
+                # the numerator (a fold that trades too little is not evidence of edge).
+                "profitable_fraction": n_profitable / n_benchmarked,
+                "mean_expectancy": sum(exps) / len(exps) if exps else None,
+                "mean_da": sum(das) / len(das) if das else None,
+                "mean_net_return": sum(nets) / len(nets) if nets else None,
+            }
+        )
+        complete_rows.append(base)
+
+    complete_rows.sort(key=_run_sort_key)
+    # Incomplete runs: closest-to-done first (fewest pending), stable-tied by git_sha.
+    # They have no score, so they cannot use _run_sort_key.
+    incomplete_rows.sort(key=lambda r: (cast(int, r["n_pending"]), str(r["git_sha"])))
+    return {"runs": complete_rows + incomplete_rows}
+
+
 class RenameBody(BaseModel):
     display_name: str
+
+
+class RunKeyBody(BaseModel):
+    git_sha: str
+    constants_sha8: str
 
 
 def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
@@ -151,6 +347,37 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"unknown model {stem!r}")
         effective = set_display_name(runner.benchmark_dir, stem, body.display_name)
         return {"stem": stem, "display_name": effective}
+
+    @app.post("/api/benchmark/run/start", status_code=202)
+    def start_run_benchmark(body: RunKeyBody) -> dict[str, object]:
+        # "Benchmark all" for one training run: the server derives the pending stems from
+        # the run key (git_sha, constants_sha8) rather than trusting a client-supplied
+        # list — only compatible, not-yet-benchmarked folds are enqueued, back-to-back.
+        # Declared BEFORE the /{stem}/start route so the literal "run" is not captured as
+        # a stem.
+        group = [
+            m
+            for m in list_models(runner.checkpoint_dir, runner.benchmark_dir)
+            if m["git_sha"] == body.git_sha and m["constants_sha8"] == body.constants_sha8
+        ]
+        if not group:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unknown run {body.git_sha}/{body.constants_sha8}",
+            )
+        pending = sorted(
+            str(m["stem"]) for m in group if m["compatible"] and not m["has_benchmark"]
+        )
+        if not pending:
+            raise HTTPException(
+                status_code=409,
+                detail="nothing to benchmark — every compatible fold is already benchmarked",
+            )
+        if not runner.start_batch(pending):
+            raise HTTPException(
+                status_code=409, detail=f"benchmark already running ({runner.current_stem})"
+            )
+        return {"state": runner.state, "stems": pending, "count": len(pending)}
 
     @app.post("/api/benchmark/{stem}/start", status_code=202)
     def start_benchmark(stem: str) -> dict[str, object]:
@@ -176,77 +403,10 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
 
     @app.get("/api/leaderboard")
     def get_leaderboard() -> dict[str, object]:
+        # One row per training run (grouped by git_sha + constants_sha8), each nesting
+        # its fold-checkpoints ranked by per-trade expectancy; see build_leaderboard.
         models = list_models(runner.checkpoint_dir, runner.benchmark_dir)
-        rows: list[dict[str, object]] = []
-        for m in models:
-            if not m["has_benchmark"]:
-                continue
-            result = m["result"]
-            assert isinstance(result, dict)
-            rows.append(
-                {
-                    "stem": m["stem"],
-                    "display_name": m["display_name"],
-                    "fold_index": m["fold_index"],
-                    "git_sha": m["git_sha"],
-                    "constants_sha8": m["constants_sha8"],
-                    "trading": result.get("trading", {}),
-                    "baselines": result.get("baselines", {}),
-                    "statistical": result.get("statistical", {}),
-                    "economic": result.get("economic", {}),
-                    "eval": result.get("eval", {}),
-                    "benchmarked_at_utc": result.get("benchmarked_at_utc"),
-                }
-            )
-
-        def _num(row: dict[str, object], group: str, key: str) -> float | None:
-            block = row.get(group)
-            v = block.get(key) if isinstance(block, dict) else None
-            return float(v) if isinstance(v, (int, float)) and math.isfinite(v) else None
-
-        def net_of(row: dict[str, object]) -> float | None:
-            return _num(row, "trading", "net_return")
-
-        # The model forecasts price, so the board ranks by forecast ACCURACY on the
-        # out-of-sample fold-test slice: directional accuracy desc, tie-broken by pinball
-        # (the quantile scoring rule) asc. Both are trade-count-independent, so a model no
-        # longer climbs merely by trading less. Missing values sort last either way.
-        def rank_key(row: dict[str, object]) -> tuple[float, float]:
-            da = _num(row, "statistical", "directional_accuracy")
-            pinball = _num(row, "statistical", "pinball")
-            return (
-                -da if da is not None else float("inf"),
-                pinball if pinball is not None else float("inf"),
-            )
-
-        rows.sort(key=rank_key)
-        for rank, row in enumerate(rows, start=1):
-            row["rank"] = rank
-
-        groups: dict[tuple[object, object], list[dict[str, object]]] = {}
-        for row in rows:
-            groups.setdefault((row["git_sha"], row["constants_sha8"]), []).append(row)
-        run_rows: list[dict[str, object]] = []
-        for (git_sha, constants_sha8), members in groups.items():
-            das = [d for d in (_num(r, "statistical", "directional_accuracy")
-                               for r in members) if d is not None]
-            nets = [v for v in (net_of(r) for r in members) if v is not None]
-            run_rows.append(
-                {
-                    "git_sha": git_sha,
-                    "constants_sha8": constants_sha8,
-                    "n_models": len(members),
-                    "mean_da": sum(das) / len(das) if das else None,
-                    "mean_net_return": sum(nets) / len(nets) if nets else None,
-                }
-            )
-        run_rows.sort(
-            key=lambda g: g["mean_da"]
-            if isinstance(g["mean_da"], float) else float("-inf"),
-            reverse=True,
-        )
-
-        safe = json_safe({"models": rows, "runs": run_rows})
+        safe = json_safe(build_leaderboard(models))
         assert isinstance(safe, dict)
         return safe
 
@@ -261,6 +421,8 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
             "quantiles": list(PREDICTOR.QUANTILES),
             "null_draws": BENCHMARK.NULL_DRAWS,
             "null_significance_level": BENCHMARK.NULL_SIGNIFICANCE_LEVEL,
+            "profitable_p_value_max": BENCHMARK.PROFITABLE_P_VALUE_MAX,
+            "profitable_min_trades": BENCHMARK.PROFITABLE_MIN_TRADES,
             "alert_auto_dismiss_seconds": TRAINING_UI.ALERT_AUTO_DISMISS_SECONDS,
             "deploy_gate_da_threshold": PREDICTOR.DEPLOY_GATE_DA_THRESHOLD,
             "deploy_gate_cal_lower": PREDICTOR.DEPLOY_GATE_CAL_LOWER,

@@ -28,13 +28,14 @@ the null parameters live in BenchmarkConfig.
 """
 from __future__ import annotations
 
+import math
 from typing import NamedTuple
 
 import numpy as np
 import numpy.typing as npt
 import torch
 
-from constants import DATA, EXECUTION, PREDICTOR
+from constants import BENCHMARK, DATA, EXECUTION, PREDICTOR
 
 _CLOSE = DATA.FEATURE_NAMES.index("close_logret")
 _Q10 = PREDICTOR.QUANTILES.index(0.10)
@@ -235,3 +236,32 @@ def random_entry_null(
         "p_value": p_value,
         "null_draws": draws,
     }
+
+
+def profitability_grade(net_return: float, trade_count: int, p_value: float) -> str:
+    """Leaderboard green-grade for one model: 'profitable' | 'not_profitable' |
+    'insufficient'.
+
+    A model is 'profitable' (green) iff it clears all three gates:
+      * mean net-of-fee log-return per trade > 0 (positive expectancy — the > $0/trade
+        the user asked for; at trade_count > 0 this is just sign(net_return)),
+      * its net PnL beats the random-entry null at ``p_value <
+        BENCHMARK.PROFITABLE_P_VALUE_MAX`` (statistically distinct from luck), and
+      * ``trade_count >= BENCHMARK.PROFITABLE_MIN_TRADES``.
+
+    Below the trade floor, or with a non-finite ``net_return``/``p_value`` (a model that
+    made no trades has a NaN p-value), the expectancy is luck-dominated / undefined and
+    the model is 'insufficient' — deliberately neither green nor red. Otherwise
+    'not_profitable' (red). Pure function of the three persisted result numbers, so
+    thresholds can change without re-running any benchmark.
+    """
+    if (
+        trade_count < BENCHMARK.PROFITABLE_MIN_TRADES
+        or not math.isfinite(net_return)
+        or not math.isfinite(p_value)
+    ):
+        return "insufficient"
+    expectancy = net_return / trade_count
+    if expectancy > 0.0 and p_value < BENCHMARK.PROFITABLE_P_VALUE_MAX:
+        return "profitable"
+    return "not_profitable"

@@ -177,6 +177,20 @@ function pCell(p) {
   return td(fmtNum(p, 3), `num ${cls}`);
 }
 
+function gradeTooltip(grade) {
+  if (!CONFIG) return "";
+  const p = CONFIG.profitable_p_value_max;
+  const n = CONFIG.profitable_min_trades;
+  if (grade === "profitable")
+    return `Profitable: positive net-of-fee expectancy per trade, beats the ` +
+      `random-entry null (p < ${p}), and >= ${n} trades.`;
+  if (grade === "insufficient")
+    return `Insufficient: fewer than ${n} trades (or none) — expectancy too ` +
+      `noisy to grade. Neither green nor red.`;
+  return `Not profitable: fails positive per-trade expectancy and/or does not ` +
+    `beat the random-entry null (p < ${p}).`;
+}
+
 function calCell(cal) {
   if (cal === null || cal === undefined) return td("—", "num dim");
   const inBand = cal >= CONFIG.deploy_gate_cal_lower && cal <= CONFIG.deploy_gate_cal_upper;
@@ -188,56 +202,179 @@ function daCell(da) {
   return td(fmtNum(da, 3), `num ${da > CONFIG.deploy_gate_da_threshold ? "pos" : "dim"}`);
 }
 
+// Which run drill-downs are open, by "git_sha:constants_sha8" — survives the re-render
+// on every SSE refresh so a benchmark completing does not collapse the user's open run.
+const EXPANDED = new Set();
+
+function runKey(run) {
+  return `${run.git_sha}:${run.constants_sha8}`;
+}
+
+// The drill-down sub-table header: the fold-checkpoint columns, with Exp. leading the
+// metrics since per-trade expectancy is the within-run rank basis.
+const MEMBER_COLS = [
+  "#", "Model", "Fold", "Exp.", "DA", "Cal.", "Pinball", "Net", "vs B&H", "p(null)",
+  "Sharpe", "Max DD", "Trades", "Hit", "Net win", "Capt.", "Adv.",
+];
+
+function renderMemberRow(r) {
+  const t = r.trading || {};
+  const b = r.baselines || {};
+  const s = r.statistical || {};
+  const e = r.economic || {};
+  const row = document.createElement("tr");
+  // Green-grade tint: profitable = positive per-trade expectancy AND beats the
+  // random-entry null (p < profitable_p_value_max) AND >= profitable_min_trades trades;
+  // insufficient = below the trade floor.
+  if (r.profitability === "profitable") row.className = "row-profitable";
+  else if (r.profitability === "insufficient") row.className = "row-insufficient";
+  row.title = gradeTooltip(r.profitability);
+  row.appendChild(td(String(r.rank), "num rank"));
+  row.appendChild(td(
+    `${esc(r.display_name)}<span class="stem-sub">${esc(r.stem)}</span>`, "name-cell"
+  ));
+  row.appendChild(td(r.fold_index === null ? "—" : String(r.fold_index), "num"));
+  // Expectancy leads — the within-run rank basis (expectancy desc, DA desc tie-break).
+  row.appendChild(td(fmtPct(r.expectancy, 3), `num ${signClass(r.expectancy)}`));
+  row.appendChild(daCell(s.directional_accuracy));
+  row.appendChild(calCell(s.calibration_rate));
+  row.appendChild(td(fmtNum(s.pinball, 4), "num"));
+  row.appendChild(td(fmtPct(t.net_return), `num ${signClass(t.net_return)}`));
+  const vsBh = t.net_return !== null && t.net_return !== undefined &&
+    b.buy_and_hold_net !== null && b.buy_and_hold_net !== undefined
+    ? t.net_return - b.buy_and_hold_net : null;
+  row.appendChild(td(fmtPct(vsBh), `num ${signClass(vsBh)}`));
+  row.appendChild(pCell(b.p_value));
+  row.appendChild(td(fmtNum(t.sharpe), `num ${signClass(t.sharpe)}`));
+  row.appendChild(td(fmtPct(t.max_drawdown !== undefined ? -t.max_drawdown : null), "num neg"));
+  row.appendChild(td(t.trade_count === undefined ? "—" : String(t.trade_count), "num"));
+  // Hit = directional (right side, ~50% expected); Net win = profitable after fee.
+  row.appendChild(td(fmtHitPct(t.directional_hit_rate), "num"));
+  row.appendChild(td(fmtHitPct(t.hit_rate), "num"));
+  row.appendChild(td(fmtRatio(e.mean_captured_fraction), "num"));
+  row.appendChild(td(fmtRatio(e.mean_adverse_ratio), "num"));
+  return row;
+}
+
+function renderRunMembers(run) {
+  const table = document.createElement("table");
+  table.className = "member-table";
+  const thead = document.createElement("thead");
+  const htr = document.createElement("tr");
+  for (const label of MEMBER_COLS) {
+    const th = document.createElement("th");
+    if (label !== "Model") th.className = "num";
+    th.textContent = label;
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  for (const m of run.models) tbody.appendChild(renderMemberRow(m));
+  table.appendChild(tbody);
+  return table;
+}
+
+// A run's "Benchmark all" control: enqueues every remaining compatible fold of the run
+// (the server derives which). Clicking must not toggle the row's drill-down.
+function benchmarkAllCell(run) {
+  const cell = document.createElement("td");
+  cell.colSpan = 4; // spans the four score columns an incomplete run has no value for
+  cell.className = "bench-all-cell";
+  const note = document.createElement("span");
+  note.className = "dim";
+  note.textContent =
+    run.n_benchmarked === 0
+      ? `not benchmarked — ${run.n_pending} fold${run.n_pending === 1 ? "" : "s"} pending`
+      : `${run.n_benchmarked} of ${run.n_compatible} benchmarked — ${run.n_pending} pending`;
+  cell.appendChild(note);
+  const btn = document.createElement("button");
+  btn.className = "btn btn-bench btn-bench-all";
+  btn.textContent = `Benchmark all (${run.n_pending})`;
+  btn.disabled = RUNNING_STEM !== null;
+  if (RUNNING_STEM !== null) btn.title = `Busy: benchmarking ${RUNNING_STEM}`;
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation(); // don't toggle the run drill-down
+    btn.disabled = true;
+    const r = await fetch("/api/benchmark/run/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        git_sha: run.git_sha,
+        constants_sha8: run.constants_sha8,
+      }),
+    });
+    if (!r.ok) {
+      const detail = (await r.json()).detail || r.status;
+      alertBox(`Could not start: ${detail}`, "error");
+      btn.disabled = false;
+    }
+  });
+  cell.appendChild(btn);
+  return cell;
+}
+
 function renderLeaderboard(payload) {
   const body = $("leaderboard-body");
   body.replaceChildren();
-  const rows = payload.models;
-  $("leaderboard-empty").classList.toggle("hidden", rows.length > 0);
-  for (const r of rows) {
-    const t = r.trading || {};
-    const b = r.baselines || {};
-    const s = r.statistical || {};
-    const e = r.economic || {};
-    const row = document.createElement("tr");
-    if (r.rank === 1) row.className = "top-rank";
-    row.appendChild(td(String(r.rank), "num rank"));
-    const name = td(
-      `${esc(r.display_name)}<span class="stem-sub">${esc(r.stem)}</span>`, "name-cell"
-    );
-    row.appendChild(name);
-    row.appendChild(td(r.fold_index === null ? "—" : String(r.fold_index), "num"));
-    // Accuracy leads — it is the rank basis (DA desc, pinball asc tie-break).
-    row.appendChild(daCell(s.directional_accuracy));
-    row.appendChild(calCell(s.calibration_rate));
-    row.appendChild(td(fmtNum(s.pinball, 4), "num"));
-    row.appendChild(td(fmtPct(t.net_return), `num ${signClass(t.net_return)}`));
-    const vsBh = t.net_return !== null && t.net_return !== undefined &&
-      b.buy_and_hold_net !== null && b.buy_and_hold_net !== undefined
-      ? t.net_return - b.buy_and_hold_net : null;
-    row.appendChild(td(fmtPct(vsBh), `num ${signClass(vsBh)}`));
-    row.appendChild(pCell(b.p_value));
-    row.appendChild(td(fmtNum(t.sharpe), `num ${signClass(t.sharpe)}`));
-    row.appendChild(td(fmtPct(t.max_drawdown !== undefined ? -t.max_drawdown : null), "num neg"));
-    row.appendChild(td(t.trade_count === undefined ? "—" : String(t.trade_count), "num"));
-    // Hit = directional (right side, ~50% expected); Net win = profitable after fee.
-    row.appendChild(td(fmtHitPct(t.directional_hit_rate), "num"));
-    row.appendChild(td(fmtHitPct(t.hit_rate), "num"));
-    row.appendChild(td(fmtRatio(e.mean_captured_fraction), "num"));
-    row.appendChild(td(fmtRatio(e.mean_adverse_ratio), "num"));
-    body.appendChild(row);
-  }
+  const runs = payload.runs || [];
+  $("leaderboard-empty").classList.toggle("hidden", runs.length > 0);
+  for (const run of runs) {
+    const key = runKey(run);
+    const hasMembers = (run.models || []).length > 0;
+    const open = hasMembers && EXPANDED.has(key);
 
-  const runs = $("runs-summary");
-  runs.replaceChildren();
-  for (const g of payload.runs) {
-    const card = document.createElement("div");
-    card.className = "run-card";
-    card.innerHTML =
-      `run <b>${esc(g.git_sha)}</b> · constants <b>${esc(g.constants_sha8)}</b> · ` +
-      `${g.n_models} model${g.n_models === 1 ? "" : "s"} · mean DA ` +
-      `<b>${fmtNum(g.mean_da, 3)}</b> · mean net ` +
-      `<b class="${signClass(g.mean_net_return)}">${fmtPct(g.mean_net_return)}</b>`;
-    runs.appendChild(card);
+    const runRow = document.createElement("tr");
+    runRow.className = run.complete ? "run-row" : "run-row run-incomplete";
+    // Only a run with benchmarked folds has a drill-down to expand.
+    const caret = td(hasMembers ? (open ? "▾" : "▸") : "", "caret");
+    runRow.appendChild(caret);
+    runRow.appendChild(td(
+      `${esc(run.git_sha)}<span class="stem-sub">constants ${esc(run.constants_sha8)}</span>`,
+      "name-cell"
+    ));
+    const foldsExtra = run.n_checkpoints > run.n_benchmarked
+      ? ` <span class="dim">of ${run.n_checkpoints}</span>` : "";
+    runRow.appendChild(td(`${run.n_benchmarked}${foldsExtra}`, "num"));
+
+    if (run.complete) {
+      // Denominator = benchmarked folds; insufficient counts here but never as profitable.
+      const frac = run.profitable_fraction;
+      const profClass = frac === null || frac === undefined ? "dim" : frac > 0 ? "pos" : "neg";
+      const insuff = run.n_insufficient > 0
+        ? ` <span class="dim">+${run.n_insufficient} insuff.</span>` : "";
+      runRow.appendChild(td(
+        `<b class="${profClass}">${run.n_profitable}/${run.n_benchmarked}</b>${insuff}`, "num"
+      ));
+      runRow.appendChild(td(fmtPct(run.mean_expectancy, 3), `num ${signClass(run.mean_expectancy)}`));
+      runRow.appendChild(td(fmtNum(run.mean_da, 3), "num"));
+      runRow.appendChild(td(fmtPct(run.mean_net_return), `num ${signClass(run.mean_net_return)}`));
+    } else {
+      // Incomplete run: no score. Offer "Benchmark all" for the remaining folds.
+      runRow.appendChild(benchmarkAllCell(run));
+    }
+
+    let detailRow = null;
+    if (hasMembers) {
+      detailRow = document.createElement("tr");
+      detailRow.className = "run-detail";
+      if (!open) detailRow.classList.add("hidden");
+      const detailCell = document.createElement("td");
+      detailCell.colSpan = 7;
+      detailCell.appendChild(renderRunMembers(run));
+      detailRow.appendChild(detailCell);
+
+      runRow.addEventListener("click", () => {
+        // classList.toggle returns true when 'hidden' is now present (i.e. collapsed).
+        const collapsed = detailRow.classList.toggle("hidden");
+        caret.textContent = collapsed ? "▸" : "▾";
+        if (collapsed) EXPANDED.delete(key);
+        else EXPANDED.add(key);
+      });
+    }
+
+    body.appendChild(runRow);
+    if (detailRow) body.appendChild(detailRow);
   }
 }
 
