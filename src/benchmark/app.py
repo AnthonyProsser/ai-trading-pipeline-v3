@@ -17,6 +17,7 @@ import queue
 import threading
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
+from typing import cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -93,26 +94,47 @@ class BenchmarkRunner:
             q.put_nowait(payload)
 
     def start(self, stem: str) -> bool:
+        """Benchmark one checkpoint. A thin single-element `start_batch`."""
+        return self.start_batch([stem])
+
+    def start_batch(self, stems: list[str]) -> bool:
+        """Benchmark a list of checkpoints back-to-back on one background thread (used by
+        "Benchmark all" — every remaining fold of a run). Returns False if a job is
+        already running or the list is empty. Each stem is best-effort: one failing
+        checkpoint surfaces an alert but does not abort the rest of the batch."""
         with self._state_lock:
-            if self.state == "running":
+            if self.state == "running" or not stems:
                 return False
             self.state = "running"
-            self.current_stem = stem
-        self.broadcast({"type": "status", "state": "running", "stem": stem})
-        self._thread = threading.Thread(target=self._run, args=(stem,), daemon=True)
+            self.current_stem = stems[0]
+        self.broadcast({"type": "status", "state": "running", "stem": stems[0]})
+        self._thread = threading.Thread(
+            target=self._run_batch, args=(list(stems),), daemon=True
+        )
         self._thread.start()
         return True
 
-    def _run(self, stem: str) -> None:
+    def _run_batch(self, stems: list[str]) -> None:
         try:
-            self._run_benchmark(self, stem)
-        except Exception as exc:  # noqa: BLE001 — job boundary must not crash the server
-            self.broadcast(
-                {
-                    "type": "alert", "level": "error",
-                    "message": f"Benchmark failed — {stem}: {exc}",
-                }
-            )
+            for i, stem in enumerate(stems):
+                # A plain str-reference assignment, atomic under the GIL, so the unlocked
+                # reads in the 409 "already running (…)" handlers can't observe a torn
+                # value; it just reflects whichever fold of the batch is in flight.
+                self.current_stem = stem
+                # start_batch already broadcast `running` for stems[0] synchronously (so a
+                # client connecting between the POST returning and this thread's first tick
+                # sees `running` at once); re-broadcast only for the subsequent stems.
+                if i:
+                    self.broadcast({"type": "status", "state": "running", "stem": stem})
+                try:
+                    self._run_benchmark(self, stem)
+                except Exception as exc:  # noqa: BLE001 — one bad fold must not abort the batch
+                    self.broadcast(
+                        {
+                            "type": "alert", "level": "error",
+                            "message": f"Benchmark failed — {stem}: {exc}",
+                        }
+                    )
         finally:
             self.current_stem = None
             self.broadcast({"type": "status", "state": "idle", "stem": None})
@@ -194,14 +216,25 @@ def _run_sort_key(run: dict[str, object]) -> tuple[float, float]:
 
 def build_leaderboard(models: list[dict[str, object]]) -> dict[str, object]:
     """Group list_models() output into per-run rows with nested, ranked fold members.
-    Runs with zero benchmarked folds are dropped (no metrics to show). Returns the
-    pre-json_safe payload {"runs": [...]}."""
+
+    A run is **complete** only when every one of its compatible (benchmarkable) fold-
+    checkpoints has a benchmark result. Complete runs are SCORED and ranked at the top by
+    profitable-fold fraction. Runs still missing a benchmark on any compatible fold
+    ("incomplete" — partial OR zero benchmarked) carry no score, sort to the bottom, and
+    expose `n_pending` so the UI can offer "Benchmark all". A run with no compatible fold
+    at all (nothing benchmarkable) is dropped. Returns pre-json_safe {"runs": [...]}."""
     groups: dict[tuple[object, object], list[dict[str, object]]] = {}
     for m in models:
         groups.setdefault((m["git_sha"], m["constants_sha8"]), []).append(m)
 
-    run_rows: list[dict[str, object]] = []
+    complete_rows: list[dict[str, object]] = []
+    incomplete_rows: list[dict[str, object]] = []
     for (git_sha, constants_sha8), group in groups.items():
+        compatible = [m for m in group if m["compatible"]]
+        if not compatible:  # nothing benchmarkable -> no board presence
+            continue
+        pending = sorted(str(m["stem"]) for m in compatible if not m["has_benchmark"])
+
         members: list[dict[str, object]] = []
         for m in group:
             if not m["has_benchmark"]:
@@ -223,12 +256,33 @@ def build_leaderboard(models: list[dict[str, object]]) -> dict[str, object]:
             row["profitability"] = _grade_of(row)
             members.append(row)
 
-        if not members:  # a run with no benchmarked folds has no board presence
-            continue
-
         members.sort(key=_member_sort_key)
         for rank, row in enumerate(members, start=1):
             row["rank"] = rank
+
+        base: dict[str, object] = {
+            "git_sha": git_sha,
+            "constants_sha8": constants_sha8,
+            "n_checkpoints": len(group),
+            "n_compatible": len(compatible),
+            "n_benchmarked": len(members),
+            "n_pending": len(pending),
+            "complete": not pending,
+            "models": members,
+        }
+
+        if pending:
+            # Incomplete: no score — the board must never rank a run whose fold set is
+            # not fully measured. It sits at the bottom carrying a "Benchmark all" count.
+            base.update(
+                {
+                    "n_profitable": None, "n_not_profitable": None, "n_insufficient": None,
+                    "profitable_fraction": None, "mean_expectancy": None,
+                    "mean_da": None, "mean_net_return": None,
+                }
+            )
+            incomplete_rows.append(base)
+            continue
 
         n_benchmarked = len(members)
         n_profitable = sum(r["profitability"] == "profitable" for r in members)
@@ -244,12 +298,8 @@ def build_leaderboard(models: list[dict[str, object]]) -> dict[str, object]:
             v for v in (_metric(r, "trading", "net_return") for r in members)
             if v is not None
         ]
-        run_rows.append(
+        base.update(
             {
-                "git_sha": git_sha,
-                "constants_sha8": constants_sha8,
-                "n_checkpoints": len(group),
-                "n_benchmarked": n_benchmarked,
                 "n_profitable": n_profitable,
                 "n_not_profitable": n_not_profitable,
                 "n_insufficient": n_insufficient,
@@ -259,16 +309,24 @@ def build_leaderboard(models: list[dict[str, object]]) -> dict[str, object]:
                 "mean_expectancy": sum(exps) / len(exps) if exps else None,
                 "mean_da": sum(das) / len(das) if das else None,
                 "mean_net_return": sum(nets) / len(nets) if nets else None,
-                "models": members,
             }
         )
+        complete_rows.append(base)
 
-    run_rows.sort(key=_run_sort_key)
-    return {"runs": run_rows}
+    complete_rows.sort(key=_run_sort_key)
+    # Incomplete runs: closest-to-done first (fewest pending), stable-tied by git_sha.
+    # They have no score, so they cannot use _run_sort_key.
+    incomplete_rows.sort(key=lambda r: (cast(int, r["n_pending"]), str(r["git_sha"])))
+    return {"runs": complete_rows + incomplete_rows}
 
 
 class RenameBody(BaseModel):
     display_name: str
+
+
+class RunKeyBody(BaseModel):
+    git_sha: str
+    constants_sha8: str
 
 
 def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
@@ -289,6 +347,37 @@ def create_app(runner: BenchmarkRunner | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"unknown model {stem!r}")
         effective = set_display_name(runner.benchmark_dir, stem, body.display_name)
         return {"stem": stem, "display_name": effective}
+
+    @app.post("/api/benchmark/run/start", status_code=202)
+    def start_run_benchmark(body: RunKeyBody) -> dict[str, object]:
+        # "Benchmark all" for one training run: the server derives the pending stems from
+        # the run key (git_sha, constants_sha8) rather than trusting a client-supplied
+        # list — only compatible, not-yet-benchmarked folds are enqueued, back-to-back.
+        # Declared BEFORE the /{stem}/start route so the literal "run" is not captured as
+        # a stem.
+        group = [
+            m
+            for m in list_models(runner.checkpoint_dir, runner.benchmark_dir)
+            if m["git_sha"] == body.git_sha and m["constants_sha8"] == body.constants_sha8
+        ]
+        if not group:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unknown run {body.git_sha}/{body.constants_sha8}",
+            )
+        pending = sorted(
+            str(m["stem"]) for m in group if m["compatible"] and not m["has_benchmark"]
+        )
+        if not pending:
+            raise HTTPException(
+                status_code=409,
+                detail="nothing to benchmark — every compatible fold is already benchmarked",
+            )
+        if not runner.start_batch(pending):
+            raise HTTPException(
+                status_code=409, detail=f"benchmark already running ({runner.current_stem})"
+            )
+        return {"state": runner.state, "stems": pending, "count": len(pending)}
 
     @app.post("/api/benchmark/{stem}/start", status_code=202)
     def start_benchmark(stem: str) -> dict[str, object]:

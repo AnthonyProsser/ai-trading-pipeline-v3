@@ -275,6 +275,45 @@ function renderRunMembers(run) {
   return table;
 }
 
+// A run's "Benchmark all" control: enqueues every remaining compatible fold of the run
+// (the server derives which). Clicking must not toggle the row's drill-down.
+function benchmarkAllCell(run) {
+  const cell = document.createElement("td");
+  cell.colSpan = 4; // spans the four score columns an incomplete run has no value for
+  cell.className = "bench-all-cell";
+  const note = document.createElement("span");
+  note.className = "dim";
+  note.textContent =
+    run.n_benchmarked === 0
+      ? `not benchmarked — ${run.n_pending} fold${run.n_pending === 1 ? "" : "s"} pending`
+      : `${run.n_benchmarked} of ${run.n_compatible} benchmarked — ${run.n_pending} pending`;
+  cell.appendChild(note);
+  const btn = document.createElement("button");
+  btn.className = "btn btn-bench btn-bench-all";
+  btn.textContent = `Benchmark all (${run.n_pending})`;
+  btn.disabled = RUNNING_STEM !== null;
+  if (RUNNING_STEM !== null) btn.title = `Busy: benchmarking ${RUNNING_STEM}`;
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation(); // don't toggle the run drill-down
+    btn.disabled = true;
+    const r = await fetch("/api/benchmark/run/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        git_sha: run.git_sha,
+        constants_sha8: run.constants_sha8,
+      }),
+    });
+    if (!r.ok) {
+      const detail = (await r.json()).detail || r.status;
+      alertBox(`Could not start: ${detail}`, "error");
+      btn.disabled = false;
+    }
+  });
+  cell.appendChild(btn);
+  return cell;
+}
+
 function renderLeaderboard(payload) {
   const body = $("leaderboard-body");
   body.replaceChildren();
@@ -282,11 +321,13 @@ function renderLeaderboard(payload) {
   $("leaderboard-empty").classList.toggle("hidden", runs.length > 0);
   for (const run of runs) {
     const key = runKey(run);
-    const open = EXPANDED.has(key);
+    const hasMembers = (run.models || []).length > 0;
+    const open = hasMembers && EXPANDED.has(key);
 
     const runRow = document.createElement("tr");
-    runRow.className = "run-row";
-    const caret = td(open ? "▾" : "▸", "caret");
+    runRow.className = run.complete ? "run-row" : "run-row run-incomplete";
+    // Only a run with benchmarked folds has a drill-down to expand.
+    const caret = td(hasMembers ? (open ? "▾" : "▸") : "", "caret");
     runRow.appendChild(caret);
     runRow.appendChild(td(
       `${esc(run.git_sha)}<span class="stem-sub">constants ${esc(run.constants_sha8)}</span>`,
@@ -295,36 +336,45 @@ function renderLeaderboard(payload) {
     const foldsExtra = run.n_checkpoints > run.n_benchmarked
       ? ` <span class="dim">of ${run.n_checkpoints}</span>` : "";
     runRow.appendChild(td(`${run.n_benchmarked}${foldsExtra}`, "num"));
-    // Denominator = benchmarked folds; insufficient counts here but never as profitable.
-    const frac = run.profitable_fraction;
-    const profClass = frac === null || frac === undefined ? "dim" : frac > 0 ? "pos" : "neg";
-    const insuff = run.n_insufficient > 0
-      ? ` <span class="dim">+${run.n_insufficient} insuff.</span>` : "";
-    runRow.appendChild(td(
-      `<b class="${profClass}">${run.n_profitable}/${run.n_benchmarked}</b>${insuff}`, "num"
-    ));
-    runRow.appendChild(td(fmtPct(run.mean_expectancy, 3), `num ${signClass(run.mean_expectancy)}`));
-    runRow.appendChild(td(fmtNum(run.mean_da, 3), "num"));
-    runRow.appendChild(td(fmtPct(run.mean_net_return), `num ${signClass(run.mean_net_return)}`));
 
-    const detailRow = document.createElement("tr");
-    detailRow.className = "run-detail";
-    if (!open) detailRow.classList.add("hidden");
-    const detailCell = document.createElement("td");
-    detailCell.colSpan = 7;
-    detailCell.appendChild(renderRunMembers(run));
-    detailRow.appendChild(detailCell);
+    if (run.complete) {
+      // Denominator = benchmarked folds; insufficient counts here but never as profitable.
+      const frac = run.profitable_fraction;
+      const profClass = frac === null || frac === undefined ? "dim" : frac > 0 ? "pos" : "neg";
+      const insuff = run.n_insufficient > 0
+        ? ` <span class="dim">+${run.n_insufficient} insuff.</span>` : "";
+      runRow.appendChild(td(
+        `<b class="${profClass}">${run.n_profitable}/${run.n_benchmarked}</b>${insuff}`, "num"
+      ));
+      runRow.appendChild(td(fmtPct(run.mean_expectancy, 3), `num ${signClass(run.mean_expectancy)}`));
+      runRow.appendChild(td(fmtNum(run.mean_da, 3), "num"));
+      runRow.appendChild(td(fmtPct(run.mean_net_return), `num ${signClass(run.mean_net_return)}`));
+    } else {
+      // Incomplete run: no score. Offer "Benchmark all" for the remaining folds.
+      runRow.appendChild(benchmarkAllCell(run));
+    }
 
-    runRow.addEventListener("click", () => {
-      // classList.toggle returns true when 'hidden' is now present (i.e. collapsed).
-      const collapsed = detailRow.classList.toggle("hidden");
-      caret.textContent = collapsed ? "▸" : "▾";
-      if (collapsed) EXPANDED.delete(key);
-      else EXPANDED.add(key);
-    });
+    let detailRow = null;
+    if (hasMembers) {
+      detailRow = document.createElement("tr");
+      detailRow.className = "run-detail";
+      if (!open) detailRow.classList.add("hidden");
+      const detailCell = document.createElement("td");
+      detailCell.colSpan = 7;
+      detailCell.appendChild(renderRunMembers(run));
+      detailRow.appendChild(detailCell);
+
+      runRow.addEventListener("click", () => {
+        // classList.toggle returns true when 'hidden' is now present (i.e. collapsed).
+        const collapsed = detailRow.classList.toggle("hidden");
+        caret.textContent = collapsed ? "▸" : "▾";
+        if (collapsed) EXPANDED.delete(key);
+        else EXPANDED.add(key);
+      });
+    }
 
     body.appendChild(runRow);
-    body.appendChild(detailRow);
+    if (detailRow) body.appendChild(detailRow);
   }
 }
 
