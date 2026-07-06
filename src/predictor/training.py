@@ -601,7 +601,8 @@ def train_all_folds(
     warm-start across folds -- matches the existing single-fold train_predictor.py
     behavior). Emits SSE-wire-schema events (training-dashboard.md "Live metric
     stream") via `log`: "batch" per training step, "epoch" per epoch-end (with ETAs),
-    "fold_complete" + "alert" after each fold, "status" on run stop/completion.
+    "fold_complete" + "alert" after each fold, "status" on user stop ("stopped") or
+    natural completion of all folds ("done").
 
     Designed to run inside a background thread (the training UI's in-process model):
     `stop_event` is checked before each fold starts AND inside train_one_fold's batch
@@ -610,12 +611,11 @@ def train_all_folds(
     A checkpoint is always written for a fold that produced any weights, including one
     interrupted by stop_event, matching the "stop = graceful checkpoint save" spec.
 
-    Terminal status: a run that reaches its natural end emits `state:"completed"`; a run
-    ended by stop_event/stopped_by_user emits `state:"stopped"`. Only on natural
-    completion — and only when `finished_dir` is given — is each fold's gate-evaluated
-    checkpoint (weights + scaler) COPIED into `finished_dir` (the `promoted` count rides
-    the completed status). This is what the benchmark app reads, so a run cut short never
-    promotes a partial set.
+    Terminal status: a run that reaches its natural end emits `state:"done"`, distinct
+    from a user-initiated `state:"stopped"`. Only on natural completion — and only when
+    `finished_dir` is given — is each fold's gate-evaluated checkpoint (weights + scaler)
+    COPIED into `finished_dir` (the `promoted` count rides the "done" status). This is
+    what the benchmark app reads, so a run cut short never promotes a partial set.
 
     Returns the FoldMetrics for every fold that actually ran (empty if stopped before
     the first fold started).
@@ -757,8 +757,8 @@ def train_all_folds(
         for weights_path, scaler_path in finished_pairs:
             # A copy failure (disk full, or a Windows AV lock on the fresh .pt) must not
             # sink the whole run: training itself succeeded, so warn with the accurate
-            # partial count and still settle the state machine on "completed" below,
-            # rather than letting the exception surface as a bare idle+alert.
+            # partial count and still settle the state machine on "done" below, rather
+            # than letting the exception surface as a bare idle+alert.
             try:
                 shutil.copy2(weights_path, finished_dir / weights_path.name)
                 shutil.copy2(scaler_path, finished_dir / scaler_path.name)
@@ -772,5 +772,7 @@ def train_all_folds(
                 })
                 break
             promoted += 1
-    emit({"type": "status", "state": "completed", "promoted": promoted})
+    # Natural completion of every fold is "done", distinct from a user-initiated
+    # "stopped", so the UI can render a terminal state instead of an ambiguous one.
+    emit({"type": "status", "state": "done", "promoted": promoted})
     return results

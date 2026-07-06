@@ -39,7 +39,7 @@ Font: system monospace stack (`ui-monospace, Consolas, "Courier New", monospace`
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  BTC Predictor Training                              [Training Dashboard]   │
-│  ●  Running — fold 3 / 84,  epoch 12 / 100                   [Stop] [Save] │
+│  ●  Running — fold 3 / 84,  epoch 12 / 100                          [Stop] │
 ├───────────────────────┬─────────────────────────────────────────────────────┤
 │  A  STATUS BAR        │  B  LOSS CHART (rolling)                            │
 │  (fixed-height strip) │                                                     │
@@ -74,7 +74,7 @@ Single dark strip (`#0d0d0d`, 48px tall). Three zones:
 
 - **Left:** App title `BTC Predictor Training` in muted small-caps, plus `[Training Dashboard]` subtitle badge in `#222` pill.
 - **Center:** Status line: colored dot + plain-English state string (see State machine below) + current fold/epoch summary when running.
-- **Right:** `Stop` and `Save` buttons (outlined style, no fill until hover). `Start` replaces both when idle. Buttons are disabled and grayed when no training process is active (for Stop/Save) or when data gate has not cleared (for Start).
+- **Right:** ONE stateful control button (outlined style, no fill until hover): `Start` when idle/stopped/errored (disabled and grayed while the data gate has not cleared), `Stop` while running (spinner while a stop is in flight — the server saves the interrupted fold's checkpoint before confirming), a brief `Saved` flash (`TrainingUIConfig.BUTTON_SAVED_FLASH_SECONDS`) once the stop's `stopped` status arrives, then back to `Start`. After natural completion of the whole run the button is a grayed-out, non-interactive `Done`. There is no separate Save button — saving happens automatically on stop and at every fold completion.
 
 **State machine for the center status line:**
 
@@ -85,8 +85,9 @@ Single dark strip (`#0d0d0d`, 48px tall). Three zones:
 | Running | Blue (pulse) | `Running — fold 3 / 84, epoch 12 / 100` |
 | Early stopped | Amber | `Early stopped — fold 3, epoch 47` |
 | Error | Red | `Error — see alert below` |
-| Stopped (clean) | Green (fade) | `Stopped — checkpoint saved` |
+| Stopped (user-initiated, clean) | Green (fade) | `Stopped — checkpoint saved` |
 | Saving | Blue | `Saving checkpoint…` |
+| Run complete (all folds done) | Green | `Training complete — you may now close this tab.` |
 
 The dot pulses (CSS `@keyframes` opacity 1 → 0.4 → 1 at 1.5s) while running.
 
@@ -282,7 +283,7 @@ Server-side `winsound.Beep` fires on the same events (fold complete, early stop,
 
 On server startup, FastAPI checks for `data/raw/XBTUSD_1.csv` (the path referenced by `DATA.KRAKEN_HISTORY_CSV_NAME` in `constants.py`). If the file is absent:
 
-- The training controls (Start/Stop/Save) are disabled and grayed.
+- The training control button (`Start`) is disabled and grayed.
 - The status line reads `Data missing — check KRAKEN_DATA_PATH` in red.
 - A yellow info box appears below the header: `Raw data file not found. Set KRAKEN_DATA_PATH to the local sync path of Kraken_OHLCVT.zip and restart the server.`
 
@@ -313,14 +314,14 @@ The server exposes a single SSE endpoint (`GET /api/events`) or WebSocket (`WS /
 
 { "type": "alert", "level": "error", "message": "subprocess exited with code 1" }
 
-{ "type": "status", "state": "running|idle|stopped|completed|saving|error",
+{ "type": "status", "state": "running|idle|stopped|saving|error|done",
   "promoted": 4,
   "wandb_mode": "online|offline|disabled",
   "wandb_run_id": "abc1234-s9f3a2b1-c7e4d3f2-fold3" }
 ```
 
 The `stem` on `fold_complete` is the run-tag join key the benchmark analysis endpoint
-pairs a benchmark result with the training record on. `state:"completed"` is emitted on a
+pairs a benchmark result with the training record on. `state:"done"` is emitted on a
 run that reaches its natural end (all folds, no user stop); its `promoted` count is how
 many finished checkpoints were copied into `PredictorConfig.FINISHED_DIR` for the
 benchmark app. A run ended by Stop emits `state:"stopped"` and promotes nothing.
@@ -331,13 +332,16 @@ The JS client subscribes on page load and routes each message type to the approp
 
 ## Training controls
 
-Three buttons, always visible after the data gate clears:
+ONE stateful control button, always visible after the first status message:
 
-| Button | Endpoint | Disabled when |
+| Button face | Fires | Shown when |
 |---|---|---|
-| Start | `POST /api/training/start` | State is `running` or `saving` |
-| Stop | `POST /api/training/stop` | State is `idle` or `stopped` |
-| Save | `POST /api/training/save` | State is `idle` or `stopped` |
+| `Start` | `POST /api/training/start` | State is `idle`, `stopped` (after the Saved flash), or `error`. Disabled while the data gate has not cleared. |
+| `Stop` | `POST /api/training/stop` | State is `running` or `saving`. Spinner from click until the `stopped` status arrives (the server saves the interrupted fold's gate-evaluated checkpoint in between). |
+| `Saved` (flash) | — (disabled) | For `TrainingUIConfig.BUTTON_SAVED_FLASH_SECONDS` after a live-observed stop confirms, then reverts to `Start`. |
+| `Done` | — (disabled, grayed) | State is `done` — the whole walk-forward run completed. Terminal: the server refuses start/stop (409); a new run requires a server restart. |
+
+There is no Save button. Saving is automatic: every fold completion writes a gate-evaluated checkpoint, and Stop saves the interrupted fold's checkpoint before exiting. `POST /api/training/save` (`save_event` mid-fold snapshot, `train_q90_coverage = NaN`, refused by `deploy_predictor.py`) remains for scripted use only.
 
 Button responses are optimistic: the button state changes immediately on click, with a spinner replacing the label until the server confirms the state change via the SSE stream. If the server returns a 4xx/5xx, the button reverts and an error banner fires.
 

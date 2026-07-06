@@ -470,7 +470,10 @@ def test_train_all_folds_walks_folds_and_emits_wire_events(tmp_path: object) -> 
     epochs = [e for e in events if e["type"] == "epoch"]
     assert epochs and all("max_epochs" in e for e in epochs)
     statuses = [e for e in events if e["type"] == "status"]
-    assert any(e["state"] == "completed" for e in statuses)  # natural run completion
+    assert any(e["state"] == "done" for e in statuses)  # natural run completion
+    # "stopped" is reserved for a user-initiated stop; a run that finishes every fold
+    # must be distinguishable so the UI can show a terminal "Done" state.
+    assert not any(e["state"] == "stopped" for e in statuses)
 
 
 def test_window_loader_matches_dataset_windowing_and_scaling() -> None:
@@ -629,13 +632,14 @@ def test_train_all_folds_stops_early_when_stop_event_set(tmp_path: object) -> No
     assert [e["fold"] for e in completes] == [0]
     statuses = [e for e in events if e["type"] == "status"]
     assert any(e["state"] == "stopped" for e in statuses)
+    assert not any(e["state"] == "done" for e in statuses)  # user stop is never "done"
 
 
 def test_train_all_folds_promotes_finished_checkpoints_on_completion(
     tmp_path: object,
 ) -> None:
     """A full run (all folds to natural end) copies every fold's gate-evaluated
-    checkpoint + scaler into finished_dir and emits a terminal state:'completed'."""
+    checkpoint + scaler into finished_dir and emits a terminal state:'done'."""
     pytest.importorskip("torch")
     from pathlib import Path
 
@@ -659,8 +663,8 @@ def test_train_all_folds_promotes_finished_checkpoints_on_completion(
 
     assert len(list(finished_dir.glob(f"*{PREDICTOR.CHECKPOINT_WEIGHTS_SUFFIX}"))) == 2
     assert len(list(finished_dir.glob(f"*{PREDICTOR.CHECKPOINT_SCALER_SUFFIX}"))) == 2
-    completed = [e for e in events if e.get("state") == "completed"]
-    assert completed and completed[-1]["promoted"] == 2
+    done = [e for e in events if e.get("state") == "done"]
+    assert done and done[-1]["promoted"] == 2
 
 
 def test_train_all_folds_does_not_promote_on_user_stop(tmp_path: object) -> None:
@@ -695,7 +699,7 @@ def test_train_all_folds_does_not_promote_on_user_stop(tmp_path: object) -> None
     )
 
     assert not finished_dir.exists() or not list(finished_dir.iterdir())
-    assert not any(e.get("state") == "completed" for e in events)
+    assert not any(e.get("state") == "done" for e in events)
     assert any(e.get("state") == "stopped" for e in events)
 
 
@@ -703,7 +707,7 @@ def test_train_all_folds_partial_promotion_warns_but_still_completes(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A copy failure during promotion (e.g. a Windows AV lock) must not sink the run:
-    it warns with the accurate partial count and still emits the terminal completed
+    it warns with the accurate partial count and still emits the terminal "done"
     state, rather than surfacing as a bare exception."""
     pytest.importorskip("torch")
     from pathlib import Path
@@ -731,5 +735,5 @@ def test_train_all_folds_partial_promotion_warns_but_still_completes(
         and "Promotion incomplete" in str(e.get("message"))
         for e in events
     )
-    completed = [e for e in events if e.get("state") == "completed"]
-    assert completed and completed[-1]["promoted"] == 0
+    done = [e for e in events if e.get("state") == "done"]
+    assert done and done[-1]["promoted"] == 0
