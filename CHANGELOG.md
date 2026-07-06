@@ -13,6 +13,13 @@ Format:
 
 ---
 
+## 2026-07-05 — Benchmark: runs-primary leaderboard (grouped by training run)
+- New decision key `benchmark_run_grouping`: the leaderboard's primary row is a **training run**, grouped by `(git_sha, constants_sha8)` from the run tag (fold-siblings share both; the per-fold scaler segment is excluded — no new run-id minted). Runs rank by `profitable_fraction` (= `n_profitable / n_benchmarked`, `insufficient` in the denominator only) desc, tie-break `mean_expectancy` desc; each run nests a ranked fold drill-down.
+- Amended `benchmark_leaderboard_ranking`: member (within-run) rank basis `statistical.directional_accuracy` desc / `statistical.pinball` asc → **per-trade expectancy (`trading.net_return / trading.trade_count`) desc / `statistical.directional_accuracy` desc** (missing/no-trade folds sort last). The green-grade bullet's "rank basis UNCHANGED" note no longer holds.
+- `GET /api/leaderboard` reshaped: `{"models": [...], "runs": [...]}` (flat per-checkpoint list + run-card summary) → `{"runs": [...]}` with ranked `models` nested per run. Aggregation moved to the pure `src/benchmark/app.py::build_leaderboard`; `static/benchmark/` reworked to run rows + expandable member sub-table. No new `constants.py` values.
+- Reason: 78 fold-checkpoints are instances of one recipe; a flat ranking cherry-picked a single best fold instead of letting recipe versions be compared at a glance. Ordering folds by the same per-trade expectancy that sets the green grade makes the drill-down read coherently.
+- Source: conversation (user request + decisions a/b).
+
 ## 2026-07-05 — Benchmark: expectancy-based green "profitable" grade vs the random-entry null
 - Amended `benchmark_leaderboard_ranking`: added a **green-grade** definition. Rank basis is UNCHANGED (`directional_accuracy` desc / `pinball` asc). New orthogonal three-state per-row classification `profitability` ∈ {`profitable`, `not_profitable`, `insufficient`}: green iff net-of-fee expectancy per trade > 0 (`trading.net_return / trading.trade_count > 0`) AND `baselines.p_value < PROFITABLE_P_VALUE_MAX` (beats the random-entry null) AND `trading.trade_count >= PROFITABLE_MIN_TRADES`; `insufficient` below the trade floor or on non-finite inputs; else `not_profitable`. Run-group summary gains `n_profitable`.
 - New `constants.py` values: `BenchmarkConfig.PROFITABLE_P_VALUE_MAX = 0.10`, `BenchmarkConfig.PROFITABLE_MIN_TRADES = 30` (served via `/api/config` so `static/benchmark/app.js` never hardcodes them). `NULL_SIGNIFICANCE_LEVEL = 0.05` unchanged (stays the p-cell display-emphasis level / pre-live-gate mirror — deliberately two thresholds).

@@ -37,31 +37,22 @@
     <section class="panel">
       <div class="panel-title">
         <h2>Leaderboard</h2>
-        <span class="panel-sub">ranked by directional accuracy on each model's own
-          out-of-sample fold-test slice (tie-break: pinball loss) — the model forecasts
-          price, so accuracy is the rank basis; net PnL / p(null) show tradeability, not
-          rank</span>
+        <span class="panel-sub">one row per training run (git sha + constants hash — folds
+          of one walk-forward run), ranked by the share of folds graded profitable
+          (tie-break: mean per-trade expectancy). Expand a run to rank its folds by
+          expectancy (tie-break: directional accuracy)</span>
       </div>
       <div class="table-scroll">
         <table id="leaderboard-table">
           <thead>
             <tr>
-              <th class="num">#</th>
-              <th>Model</th>
-              <th class="num">Fold</th>
-              <th class="num" title="Directional accuracy on the out-of-sample fold-test slice — the rank basis">DA</th>
-              <th class="num" title="[q10,q90] calibration — gate band from config">Cal.</th>
-              <th class="num" title="Pinball (quantile) loss — the accuracy tie-breaker; lower is better">Pinball</th>
-              <th class="num" title="Sum of per-trade net log-returns, shown as %">Net</th>
-              <th class="num" title="vs buy-and-hold over the same slice">vs B&H</th>
-              <th class="num" title="Random-entry null at matched trade frequency">p(null)</th>
-              <th class="num" title="Per-trade Sharpe (no annualization)">Sharpe</th>
-              <th class="num">Max DD</th>
-              <th class="num">Trades</th>
-              <th class="num" title="Directional hit rate — share of trades on the right side, pre-fee (~50% expected)">Hit</th>
-              <th class="num" title="Net win rate — share of trades profitable after the round-trip fee">Net win</th>
-              <th class="num" title="Mean fraction of the predicted move captured">Capt.</th>
-              <th class="num" title="Mean adverse excursion / predicted magnitude">Adv.</th>
+              <th class="caret-col"></th>
+              <th title="Training run — git commit + constants hash; all its folds share both">Run</th>
+              <th class="num" title="Folds benchmarked, of the run's total fold-checkpoints">Folds</th>
+              <th class="num" title="Folds graded profitable / folds benchmarked (insufficient counts in the denominator)">Profitable</th>
+              <th class="num" title="Mean per-trade net-of-fee expectancy across the run's folds">Mean exp.</th>
+              <th class="num" title="Mean directional accuracy across the run's folds">Mean DA</th>
+              <th class="num" title="Mean net-of-fee return across the run's folds">Mean net</th>
             </tr>
           </thead>
           <tbody id="leaderboard-body"></tbody>
@@ -70,7 +61,6 @@
           No benchmarked models yet — start one below.
         </div>
       </div>
-      <div id="runs-summary" class="runs-summary"></div>
     </section>
 
     <section class="panel">
