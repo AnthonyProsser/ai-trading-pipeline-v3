@@ -10,3 +10,14 @@ Answer whenever you're back at the computer; none block the loop.
 6. **Krafer video Tier-1 features.** Priority order when I get to them? My default: (2) swing high/low distance first (simplest), then (1) volume-at-price, (3) absorption, (4) rejection wicks. Or grouped as one idea to save GPU-days, at the cost of attribution?
 7. **Merging idea-2 (multi-scale).** It beat baseline (0.5201 vs 0.5155, 69/78 vs 63/78 folds >0.5). Merging to `main` requires the suspended auditor trio re-run per CLAUDE.md. Want that started, or hold until more ideas are compared?
 8. **Auto-benchmark after each run?** I can run benchmark scoring headlessly after each training completes (adds GPU time between trainings). Confirm you want it always-on so every run row is scored when you look.
+
+---
+## ANSWERS (2026-07-08, user present)
+1. Screening: **Full 78-fold every idea** (no subset tier).
+2. Feature backlog: **One at a time, attributable**, order swing-high/low → volume-at-price → absorption → rejection-wicks.
+3. Auto-benchmark: **Always-on** — score each run's checkpoints right after training finishes (headless scorer to build).
+4. Idea-2 merge: **Hold**, keep comparing; merge only a clear larger winner.
+5. Fee analysis: **Yes** — one-off from benchmark results (no training): what fee/horizon/min-move the current edge would clear.
+6. Storage: **Keep everything** in finished/.
+7. Benchmark app arch-awareness: **Fine as-is** (checkout matching branch to benchmark).
+Parked: old rejections — idea-1 running; skip idea-4 (real calibration defect), idea-3 low value.
