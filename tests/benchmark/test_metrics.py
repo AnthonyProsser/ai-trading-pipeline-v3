@@ -114,3 +114,14 @@ def test_statistical_metrics_keys_and_coverage() -> None:
     # the close pins [q10,q50,q90]=[-1,0,1] vs target 0 -> errors give 0.1+0+0.1=0.2; two
     # steps -> 0.4 summed, meaned over all 30 elements = 0.4/30.
     assert m["pinball"] == pytest.approx(0.4 / 30, abs=1e-6)
+
+
+def test_statistical_da_scores_final_horizon_step_only() -> None:
+    """DA reads ONLY the final horizon step — the move a hold-to-horizon trade actually
+    spans. Intermediate steps carry tradeable q50s with the WRONG sign; if they were
+    counted (the old all-steps semantics), DA would be 1/3 instead of 1.0."""
+    fee = EXECUTION.FEE_THRESHOLD
+    pred = _make_pred([-2 * fee, -2 * fee, 2 * fee], pad=10.0)
+    target_model = _make_target([1.0, 1.0, 1.0])  # model-space: positive at every step
+    m = statistical_metrics(pred, target_model)
+    assert m["directional_accuracy"] == pytest.approx(1.0)

@@ -167,3 +167,32 @@ def test_evaluate_deploy_gates_fails_on_coverage_drift() -> None:
 
     assert not result.coverage_pass
     assert not result.all_passed
+
+
+def test_evaluate_deploy_gates_da_slice_overrides() -> None:
+    """``da_pred``/``da_target`` restrict ONLY the DA gate (the traded final-horizon-step
+    move); coverage and calibration still score the full tensors (interval quality across
+    the whole path). Collectors with a horizon axis pass the final-step slice here."""
+    pytest.importorskip("torch")
+    from src.predictor.deploy_gates import evaluate_deploy_gates
+
+    torch = pytest.importorskip("torch")
+    pred, target = _blank(4)
+    pred[:, _CLOSE, _Q10] = -1.0
+    pred[:, _CLOSE, _Q90] = 1.0
+    pred[:, _CLOSE, _Q50] = 2 * _FEE  # full tensors say "up"...
+    # ...but realised is down: all-steps DA would be 0.0. One target below q10 keeps
+    # calibration at 3/4 = 0.75 (inside the gate band, isolating the DA slice).
+    target[:, _CLOSE] = torch.tensor([-0.5, -0.5, -0.5, -2.0])
+
+    da_pred, da_target = _blank(2)
+    da_pred[:, _CLOSE, _Q50] = 2 * _FEE
+    da_target[:, _CLOSE] = 0.5  # final-step slice: sign agrees -> DA 1.0
+
+    result = evaluate_deploy_gates(
+        pred, target, train_time_q90_coverage=1.0, da_pred=da_pred, da_target=da_target
+    )
+    assert result.directional_accuracy == pytest.approx(1.0)  # from the DA slice
+    assert result.calibration_rate == pytest.approx(0.75)  # from the full tensors
+    assert result.q90_coverage == pytest.approx(1.0)
+    assert result.da_pass and result.all_passed
