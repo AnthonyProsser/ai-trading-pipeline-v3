@@ -89,6 +89,10 @@ Solo paper-trading BTC bot. Three components: **Predictor** (PatchTST encoder, 1
 
 **Horizon sweep** (2026-07-06, branch `horizon-sweep` off `main`, cross-phase experiment — committed, not merged, no PR). Motivated by the benchmark verdict on the 78-fold run: **0/78 profitable**, mean loss = exactly the 0.62% round-trip fee per trade, because at `HORIZON=15` typical BTC moves can't clear `FEE_THRESHOLD`. Landed (tests-first, auditor trio green, 228 tests / `mypy --strict` / `ruff` clean): (1) `tests/predictor/test_training.py` fold literals derived from `_LOOKBACK + _H` — green at any horizon; (2) `scripts/eval_predictor.py::fixed_instrument_summary` — `train-eval` now scores each seed with the benchmark app's exact fixed trading instrument (net PnL / trades / p-value vs random-entry null) on the fold VAL gather, emitted as a `"trading"` result group; hold length from `pred.shape[1]`, a codified exception in DECISIONS `benchmark_trading_rule` (sweep candidates train under edited horizon constants); (3) **deploy gate (b) DA is now final-horizon-step only** (the traded quantity) — final-step slices in `statistical_metrics` / `evaluate_directional_accuracy`, `da_pred`/`da_target` kwargs on `evaluate_deploy_gates`, used by `deploy_predictor.py`; DECISIONS `deploy_gates` amended + CHANGELOG same-commit. **Stage A bake-off (fold 77, 3 seeds, 20-epoch cap, 4060, ~3.7h): ALL FOUR candidates net-negative** — {H60,H240}×{λ1.5,1.75}: H60 ≈ −3.7 over ~610 trades, H240 ≈ −1.0 over ~165 trades, per-trade loss ≈ the fee at every horizon; net hit rate improved 3.5%→14% at H240 but DA stayed 0.48–0.50 (coin flip), p vs null 0.38–0.53. **Per the pre-registered decision rule the full 78-fold run was NOT launched**; `constants.py` untouched (HORIZON stays 15 pending a signal-side fix). Conclusion: fixing fee economics was necessary but not sufficient — the binding constraint is directional signal, not horizon. Unexplored levers: feature engineering (only 5 raw OHLCV log-return features today — no time-of-day / multi-scale / higher-timeframe features), the specced-but-never-run lookback sweep [240/720/1440], capacity/factorized head. Bake-off JSONs in the 2026-07-06 session scratchpad.
 
+**horizon-sweep merged to `main`** (2026-07-07) — the infra (fixed-instrument PnL hook, DA final-step gate, horizon-independent fold literals) was solid even though the horizon experiment itself was net-negative; branch deleted post-merge. Stale merged branches (`phase-15-controls-fix`, `benchmark-app`, `benchmark-all-button`) also deleted — `main` is now the sole branch.
+
+**Idea-search loop** (2026-07-07, cross-phase, unattended multi-day GPU run). Started to find a directionally-profitable recipe — every prior benchmark run showed DA ≈ coin-flip. Each idea gets its own `idea-*` branch off `main`; a fast capped bake-off (1 fold, few seeds, epoch-capped) screens each before any full run. The mandatory per-change subagent review triggers are suspended for this loop (see ECC integrations note below) to prioritize trying many ideas over polishing each one; re-invoke the auditor trio by hand once an idea is chosen for refinement.
+
 Read first, every coding session, in this order: `DECISIONS.md` → `INDEX.md` → `constants.py` → the relevant context card named by the matching INDEX row. They are the source of truth for architectural decisions, task → file mapping, and frozen magic numbers respectively.
 
 ### Tech stack
@@ -120,15 +124,7 @@ Read first, every coding session, in this order: `DECISIONS.md` → `INDEX.md` �
 - **Flag every unspecced decision.** If a task requires a value not in `DECISIONS.md` or `constants.py`, stop and ask. Do not "use a reasonable default" — this aligns with Karpathy §1.
 - **Update `CLAUDE.md` (Repo state section) after every completed feature or phase.** It is the first file read every session — stale repo-state causes wasted work at session start.
 
-### Custom agents — mandatory trigger rules
-
-Three project-specific subagents live in `.claude/agents/`. They are read-only auditors; invoke them via the Agent tool at the triggers below. Do not skip them.
-
-| Agent | When to invoke |
-|---|---|
-| `decisions-auditor` | After implementing or editing **any** module under `src/` or `scripts/`. Also whenever a constant, formula, threshold, schema, or I/O shape appears in a diff. |
-| `leakage-checker` | Before any Phase 0 exit. On **any** change to `src/data/` (feature pipeline, scaler, walk-forward, validator). Pre-merge on PRs touching `src/data/`. |
-| `test-enforcer` | At the **start** of every implementation task (confirms test-first ordering) and at **phase completion** (confirms mirror completeness). |
+Three project-specific subagents live in `.claude/agents/` (`decisions-auditor`, `leakage-checker`, `test-enforcer`). They are read-only auditors, still available via the Agent tool, but there is currently no mandatory trigger requiring them on every `src/`/`scripts/` change — see the idea-search loop note in Repo state for why, and invoke them by hand once an idea is picked for refinement.
 
 ### ECC integrations
 
