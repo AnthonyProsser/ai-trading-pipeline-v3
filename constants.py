@@ -66,7 +66,7 @@ class DataConfig:
     )
     # vol_change is +/-inf when current/prior volume is 0; degenerate value filled neutral.
     VOL_CHANGE_DEGENERATE_FILL: float = 0.0
-    LOOKBACK: int = 1_440  # SWEEP [240, 720, 1440] before long training run
+    LOOKBACK: int = 720  # SWEEP [240, 720, 1440] before long training run (idea-03: 720)
     # Floor for log(volume_t / volume_{t-1}). When volume_t = 0 or the ratio is
     # tiny, the raw log goes to -inf; clip to this finite floor so the scaler
     # has a stable input distribution. e^-10 ≈ 4.5e-5× — well below any
