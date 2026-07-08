@@ -1,0 +1,68 @@
+{
+  "economic": {
+    "mean_adverse_ratio": 0.11557654291391373,
+    "mean_captured_fraction": 0.1193902591864268,
+    "median_captured_fraction": 0.06386176124215126,
+    "n_used": 9666.0
+  },
+  "economic_std": {
+    "mean_adverse_ratio": 0.0063263328212173385,
+    "mean_captured_fraction": 0.006658710537876044,
+    "median_captured_fraction": 0.004308725049257687
+  },
+  "fold_index": 77,
+  "label": "idea-4",
+  "max_epochs": 20,
+  "max_steps": null,
+  "n_seeds_failed": 0,
+  "seeds": 3,
+  "semantics": "cumulative_logret",
+  "statistical": {
+    "calibration_rate": 0.9413458941576603,
+    "directional_accuracy": 0.4827261951858313,
+    "pinball": 0.11403148124615352,
+    "q90_coverage": 0.9651597339522194,
+    "sharpness_close": 0.08108372489611308
+  },
+  "statistical_std": {
+    "calibration_rate": 0.06304901770055653,
+    "directional_accuracy": 0.001958992187588194,
+    "pinball": 0.0008863902241187831,
+    "q90_coverage": 0.04021286122742398,
+    "sharpness_close": 0.011583547194624493
+  },
+  "timing": {
+    "epochs": 14.0,
+    "seconds_per_epoch": 14.045050315751064,
+    "wall_seconds": 196.63858710000204
+  },
+  "timing_std": {
+    "epochs": 0.816496580927726,
+    "seconds_per_epoch": 0.04737528098992794,
+    "wall_seconds": 11.594003581036878
+  },
+  "trading": {
+    "directional_hit_rate": 0.4451262458640102,
+    "hit_rate": 0.0014930944382232176,
+    "max_drawdown": 2.009040870721519,
+    "net_return": -2.009040870721517,
+    "null_draws": 200.0,
+    "null_mean": -2.012457451264345,
+    "null_std": 0.023506207157026896,
+    "p_value": 0.5588723051409619,
+    "sharpe": -5.426324419428614,
+    "trade_count": 324.6666666666667
+  },
+  "trading_std": {
+    "directional_hit_rate": 0.10776716260267526,
+    "hit_rate": 0.002111554404439112,
+    "max_drawdown": 2.479388102537741,
+    "net_return": 2.479388102537738,
+    "null_draws": 0.0,
+    "null_mean": 2.4955094231721575,
+    "null_std": 0.019973559634922942,
+    "p_value": 0.25634633786487276,
+    "sharpe": 1.5362636606578353,
+    "trade_count": 402.4991373351694
+  }
+}
