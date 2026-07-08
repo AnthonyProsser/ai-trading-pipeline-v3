@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import inspect
 import subprocess
 import sys
 import time
@@ -82,7 +83,11 @@ def main() -> int:
         raise SystemExit(f"[stop] {csv_path} not found; real data required.")
     timestamps, ohlcv = _load_real_candles(csv_path)
     validated = validate_candles(timestamps, ohlcv)
-    features = compute_features(validated.ohlcv)
+    # Branch-agnostic: idea branches may extend compute_features with a timestamps arg.
+    if "timestamps" in inspect.signature(compute_features).parameters:
+        features = compute_features(validated.ohlcv, validated.timestamps)
+    else:
+        features = compute_features(validated.ohlcv)
     feature_ts = validated.timestamps[1:]
     feature_ts, features = filter_by_historical_start(feature_ts, features)
     folds = make_folds(carve_locked_test(features.shape[0]))
