@@ -60,10 +60,11 @@ class PatchTST(nn.Module):
                 f"only channel_mixing patch embedding is implemented, not "
                 f"{PREDICTOR.PATCH_EMBED_MODE!r}"
             )
-        if PREDICTOR.NUM_OUTPUT_DIMS != DATA.NUM_INPUT_FEATURES:
+        if PREDICTOR.NUM_OUTPUT_DIMS > DATA.NUM_INPUT_FEATURES:
             raise ValueError(
-                "volatility-conditioned output scaling maps each output dim to its "
-                f"input feature 1:1; NUM_OUTPUT_DIMS={PREDICTOR.NUM_OUTPUT_DIMS} != "
+                "output dims must be a prefix of the input features (volatility-"
+                f"conditioned output scaling maps each output dim 1:1 to its input "
+                f"feature); NUM_OUTPUT_DIMS={PREDICTOR.NUM_OUTPUT_DIMS} > "
                 f"NUM_INPUT_FEATURES={DATA.NUM_INPUT_FEATURES}"
             )
         if tuple(sorted(PREDICTOR.QUANTILES)) != PREDICTOR.QUANTILES:
@@ -81,9 +82,11 @@ class PatchTST(nn.Module):
         # cumulative softplus offsets.
         self._anchor = n_quantiles // 2
 
-        # RevIN learnable affine (applied after per-window standardisation).
-        self.revin_weight = nn.Parameter(torch.ones(DATA.NUM_INPUT_FEATURES))
-        self.revin_bias = nn.Parameter(torch.zeros(DATA.NUM_INPUT_FEATURES))
+        # RevIN learnable affine (applied after per-window standardisation). Sized to
+        # NUM_OUTPUT_DIMS, not NUM_INPUT_FEATURES: RevIN only normalises the OHLCV
+        # prefix of the input -- clock features bypass it (see forward()).
+        self.revin_weight = nn.Parameter(torch.ones(PREDICTOR.NUM_OUTPUT_DIMS))
+        self.revin_bias = nn.Parameter(torch.zeros(PREDICTOR.NUM_OUTPUT_DIMS))
 
         self.patch_embed = nn.Linear(self.patch_dim, PREDICTOR.D_MODEL)
         # Learnable positional embedding, zero-initialised (no bare init literal).
@@ -113,12 +116,21 @@ class PatchTST(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch = x.shape[0]
+        n_out = PREDICTOR.NUM_OUTPUT_DIMS
+        # RevIN applies only to the OHLCV prefix. Clock features (tod/dow sin/cos) are
+        # bounded and already MinMax-scaled by the fold scaler; a near-constant window
+        # (e.g. day-of-week within a 24h lookback) would drive RevIN's sigma toward 0
+        # and blow up (x - mean) / sigma, so they bypass RevIN and reach the patch
+        # embedding as-is.
+        x_ohlcv = x[..., :n_out]
+        x_clock = x[..., n_out:]
         # RevIN: standardise each window per feature. Any fixed affine the fold scaler
         # applied cancels out here, so the encoder sees the same distribution whether it
         # is fed raw or MinMax-scaled features.
-        mean = x.mean(dim=1, keepdim=True)  # (batch, 1, feat)
-        sigma = x.std(dim=1, keepdim=True) + PREDICTOR.REVIN_EPS  # (batch, 1, feat)
-        z = (x - mean) / sigma * self.revin_weight + self.revin_bias
+        mean = x_ohlcv.mean(dim=1, keepdim=True)  # (batch, 1, out_dims)
+        sigma = x_ohlcv.std(dim=1, keepdim=True) + PREDICTOR.REVIN_EPS  # (batch, 1, out_dims)
+        z_ohlcv = (x_ohlcv - mean) / sigma * self.revin_weight + self.revin_bias
+        z = torch.cat([z_ohlcv, x_clock], dim=-1)
 
         # (batch, lookback, feat) -> (batch, num_tokens, patch_size*feat): non-overlapping
         # patches of PATCH_SIZE consecutive timesteps with all features mixed in.

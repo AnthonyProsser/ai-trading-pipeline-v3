@@ -56,16 +56,27 @@ class DataConfig:
     SEARCH_CONFIRM_SEEDS: int = 3
 
     # Feature pipeline
-    NUM_INPUT_FEATURES: int = 5  # OHLC log-returns + log1p volume change
+    # idea-01-timefeatures: 5 OHLC log-returns + log1p volume change, plus 4 cyclical
+    # clock features (time-of-day + day-of-week sin/cos) so the encoder can learn
+    # session/weekend seasonality within a lookback window. Inputs only -- the model
+    # still predicts just the 5 OHLCV dims (PredictorConfig.NUM_OUTPUT_DIMS).
+    NUM_INPUT_FEATURES: int = 9
     FEATURE_NAMES: tuple[str, ...] = (
         "open_logret",
         "high_logret",
         "low_logret",
         "close_logret",
         "vol_change",
+        "tod_sin",
+        "tod_cos",
+        "dow_sin",
+        "dow_cos",
     )
     # vol_change is +/-inf when current/prior volume is 0; degenerate value filled neutral.
     VOL_CHANGE_DEGENERATE_FILL: float = 0.0
+    # Day-of-week cyclical period (dow_sin/dow_cos). Time-of-day needs no such constant --
+    # it uses fraction-of-day in [0, 1).
+    DAYS_PER_WEEK: int = 7
     LOOKBACK: int = 1_440  # SWEEP [240, 720, 1440] before long training run
     # Floor for log(volume_t / volume_{t-1}). When volume_t = 0 or the ratio is
     # tiny, the raw log goes to -inf; clip to this finite floor so the scaler

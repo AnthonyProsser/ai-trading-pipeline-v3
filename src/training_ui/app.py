@@ -177,7 +177,7 @@ def _default_run_training(runner: TrainingRunner) -> None:
     csv_path = REPO_ROOT / DATA.KRAKEN_HISTORY_OUT_DIR / DATA.KRAKEN_HISTORY_CSV_NAME
     timestamps, ohlcv = _load_real_candles(csv_path)
     validated = validate_candles(timestamps, ohlcv)
-    features = compute_features(validated.ohlcv)
+    features = compute_features(validated.ohlcv, validated.timestamps)
     feature_ts = validated.timestamps[1:]
     feature_ts, features = filter_by_historical_start(feature_ts, features)
     folds = make_folds(carve_locked_test(features.shape[0]))

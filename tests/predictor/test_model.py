@@ -96,15 +96,25 @@ def test_forward_is_shift_invariant_and_volatility_scaled() -> None:
     # RevIN-style instance normalization: a constant shift of the input window must not
     # change the forecast, and rescaling the window by k must rescale the predicted
     # quantiles by ~k (interval width tracks current volatility by construction).
+    # idea-01-timefeatures: RevIN now applies to the OHLCV prefix only -- clock columns
+    # bypass it by design (they're bounded periodic signals, not meant to be shifted or
+    # volatility-scaled), so only the OHLCV columns are shifted/rescaled here; the clock
+    # columns are held fixed between the two forward passes being compared.
     torch = pytest.importorskip("torch")
     from src.predictor.model import PatchTST
 
     torch.manual_seed(PREDICTOR.SEED)
     model = PatchTST(lookback=PREDICTOR.PATCH_SIZE * 2).eval()
+    n_out = PREDICTOR.NUM_OUTPUT_DIMS
     x = torch.randn(4, PREDICTOR.PATCH_SIZE * 2, _IN)
 
-    assert torch.allclose(model(x + 5.0), model(x), atol=1e-4)
-    assert torch.allclose(model(x * 3.0), model(x) * 3.0, rtol=1e-3, atol=1e-5)
+    x_shifted = x.clone()
+    x_shifted[..., :n_out] += 5.0
+    assert torch.allclose(model(x_shifted), model(x), atol=1e-4)
+
+    x_scaled = x.clone()
+    x_scaled[..., :n_out] *= 3.0
+    assert torch.allclose(model(x_scaled), model(x) * 3.0, rtol=1e-3, atol=1e-5)
 
 
 def test_forward_maps_nine_input_features_to_five_output_dims() -> None:

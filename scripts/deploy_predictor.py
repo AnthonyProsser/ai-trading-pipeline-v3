@@ -207,7 +207,7 @@ def run(args: argparse.Namespace) -> int:
 
     timestamps, ohlcv = load_eval_candles(args.eval_data)
     validated = validate_candles(timestamps, ohlcv)
-    features = compute_features(validated.ohlcv)
+    features = compute_features(validated.ohlcv, validated.timestamps)
     pred, target = gather_predictions(
         model, scaler, features, lookback=args.lookback, batch_size=PREDICTOR.SMOKE_BATCH_SIZE
     )

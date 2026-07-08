@@ -112,7 +112,7 @@ def prepare(
         train_n, val_n, test_n = lookback * 4, lookback * 2, lookback
         timestamps, ohlcv = synthetic_candles(train_n + val_n + test_n + 1, PREDICTOR.SEED)
         validated = validate_candles(timestamps, ohlcv)
-        features = compute_features(validated.ohlcv)
+        features = compute_features(validated.ohlcv, validated.timestamps)
         feature_ts = validated.timestamps[1:]
         fold = Fold(
             0, 0, train_n, train_n, train_n + val_n, train_n + val_n, train_n + val_n + test_n
@@ -127,7 +127,7 @@ def prepare(
         )
     timestamps, ohlcv = load_real_candles(csv_path)
     validated = validate_candles(timestamps, ohlcv)
-    features = compute_features(validated.ohlcv)
+    features = compute_features(validated.ohlcv, validated.timestamps)
     feature_ts = validated.timestamps[1:]
 
     if search_slice:

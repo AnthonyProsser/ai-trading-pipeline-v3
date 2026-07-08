@@ -82,7 +82,7 @@ def _prepare_fold(csv_path: Path, fold_index: int) -> tuple[
     """Rebuild the identical walk-forward fold the training script uses (real-data path)."""
     timestamps, ohlcv = _load_real_candles(csv_path)
     validated = validate_candles(timestamps, ohlcv)
-    features = compute_features(validated.ohlcv)
+    features = compute_features(validated.ohlcv, validated.timestamps)
     feature_ts = validated.timestamps[1:]
     feature_ts, features = filter_by_historical_start(feature_ts, features)
     folds = make_folds(carve_locked_test(features.shape[0]))

@@ -103,7 +103,7 @@ def _load_features(csv_path: Path) -> FeatureArrays:
         )
         timestamps = arr[:, 0].astype("int64").astype("datetime64[s]")
         validated = validate_candles(timestamps, arr[:, 1:6].astype(np.float64))
-        features = compute_features(validated.ohlcv)
+        features = compute_features(validated.ohlcv, validated.timestamps)
         feature_ts = validated.timestamps[1:]
         feature_ts, features = filter_by_historical_start(feature_ts, features)
         _FEATURE_CACHE[key] = (feature_ts, features)
@@ -201,8 +201,12 @@ def run_benchmark_job(runner: RunnerLike, stem: str) -> None:
     x_scaled = scaler.transform_inference(slice_feats)
 
     emit("inference", n_windows=int(end - start - lookback - PREDICTOR.HORIZON + 1))
+    # Targets stay OHLCV-only (idea-01-timefeatures: slice_feats/x_scaled carry 4 extra
+    # clock columns as model INPUT, but the model only ever predicts NUM_OUTPUT_DIMS
+    # dims) so pred and target_raw/target_cum shapes match downstream.
     pred, target_raw = _gather_predictions(
-        model, x_scaled, slice_feats, lookback=lookback, device=device
+        model, x_scaled, slice_feats[:, : PREDICTOR.NUM_OUTPUT_DIMS],
+        lookback=lookback, device=device,
     )
     target_cum = torch.cumsum(target_raw, dim=1)
 
