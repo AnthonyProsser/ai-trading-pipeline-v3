@@ -23,6 +23,7 @@ import pytest
 from constants import DATA, PREDICTOR
 
 _F = DATA.NUM_INPUT_FEATURES
+_OUT_DIM = PREDICTOR.NUM_OUTPUT_DIMS  # idea-02-multiscale: targets are OHLCV-only
 _LOOKBACK = PREDICTOR.PATCH_SIZE * 2  # 32: small but divisible by PATCH_SIZE
 _H = PREDICTOR.HORIZON
 
@@ -94,7 +95,7 @@ def test_build_fold_loaders_scales_on_train_and_shapes() -> None:
     assert scaler.data_min_ is not None and scaler.data_max_ is not None
     xb, yb = next(iter(train_loader))
     assert xb.shape == (16, _LOOKBACK, _F)
-    assert yb.shape == (16, _H, _F)
+    assert yb.shape == (16, _H, _OUT_DIM)
     assert float(xb.min()) >= 0.0 and float(xb.max()) <= 1.0 + 1e-6
     assert next(iter(val_loader))[0].shape[1:] == (_LOOKBACK, _F)
 
@@ -539,7 +540,7 @@ def test_window_loader_matches_dataset_windowing_and_scaling() -> None:
     assert len(train_loader) == len(train_batches)
     for xb, yb in train_batches:
         assert xb.shape == (16, _LOOKBACK, _F)
-        assert yb.shape == (16, _H, _F)
+        assert yb.shape == (16, _H, _OUT_DIM)
         assert float(xb.min()) >= 0.0 and float(xb.max()) <= 1.0 + 1e-6
 
     val_rows = sum(int(xb.shape[0]) for xb, _ in val_loader)

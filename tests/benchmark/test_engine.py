@@ -26,7 +26,7 @@ from src.predictor.model import PatchTST
 
 _STEM = "abc1234-s001e4348-c487b9e2e-fold0"
 _LOOKBACK = 32
-_NDIM = PREDICTOR.NUM_OUTPUT_DIMS
+_NFEAT = DATA.NUM_INPUT_FEATURES  # idea-02-multiscale: model input width (9)
 
 
 class _StubRunner:
@@ -58,7 +58,7 @@ def _write_checkpoint(
     scaler = PerFoldMinMaxScaler(
         fold_start=np.datetime64("2020-01-01", "m"), fold_end=np.datetime64("2020-02-01", "m")
     )
-    scaler.fit(np.random.default_rng(0).normal(size=(64, _NDIM)))
+    scaler.fit(np.random.default_rng(0).normal(size=(64, _NFEAT)))
     with open(checkpoint_dir / f"{stem}{PREDICTOR.CHECKPOINT_SCALER_SUFFIX}", "wb") as fh:
         pickle.dump(scaler, fh)
 
@@ -117,7 +117,7 @@ def test_run_benchmark_job_end_to_end_writes_result(
 
     n = 260
     rng = np.random.default_rng(1)
-    features = rng.normal(0.0, 0.01, size=(n, _NDIM)).astype(np.float64)
+    features = rng.normal(0.0, 0.01, size=(n, _NFEAT)).astype(np.float64)
     feature_ts = (
         np.datetime64("2020-01-01T00:00", "m") + np.arange(n).astype("timedelta64[m]")
     ).astype("datetime64[s]")

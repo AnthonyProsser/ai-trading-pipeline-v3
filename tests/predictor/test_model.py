@@ -92,6 +92,20 @@ def test_quantile_outputs_are_monotone_by_construction() -> None:
         assert bool(torch.all(y[..., lo] <= y[..., lo + 1]))
 
 
+def test_forward_maps_nine_input_features_to_five_output_dims() -> None:
+    # idea-02-multiscale: NUM_INPUT_FEATURES (9: 5 OHLCV + 4 multi-scale momentum
+    # returns) is decoupled from NUM_OUTPUT_DIMS (5: OHLCV only) -- the model still
+    # predicts only OHLCV; RevIN and the patch embedding still cover all 9 inputs.
+    torch = pytest.importorskip("torch")
+    from src.predictor.model import PatchTST
+
+    assert DATA.NUM_INPUT_FEATURES == 9
+    assert PREDICTOR.NUM_OUTPUT_DIMS == 5
+    model = PatchTST(lookback=DATA.LOOKBACK).eval()
+    y = model(torch.randn(2, DATA.LOOKBACK, _IN))
+    assert y.shape == (2, PREDICTOR.HORIZON, 5, len(PREDICTOR.QUANTILES))
+
+
 def test_forward_is_shift_invariant_and_volatility_scaled() -> None:
     # RevIN-style instance normalization: a constant shift of the input window must not
     # change the forecast, and rescaling the window by k must rescale the predicted
