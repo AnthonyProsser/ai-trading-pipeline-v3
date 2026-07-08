@@ -138,6 +138,11 @@ class PredictorConfig:
     COVERAGE_PENALTY_TEMPERATURE_FRAC: float = 0.02
     # Floors the indicator width so a degenerate flat batch (zero std) cannot /0.
     COVERAGE_PENALTY_STD_FLOOR: float = 1e-8
+    # Weight on the auxiliary directional BCE term (DECISIONS.md 'loss', idea-04
+    # amendment): a training-only head predicting the sign of the final-horizon
+    # cumulative close move, sharing the encoder trunk with the quantile head.
+    # Dropped at inference -- forward() never calls it.
+    AUX_DIRECTION_WEIGHT: float = 0.5
 
     # Training loop. AdamW; linear warmup then constant LR with plateau decay (the
     # previous cosine schedule annealed over a MAX_EPOCHS horizon that early stopping

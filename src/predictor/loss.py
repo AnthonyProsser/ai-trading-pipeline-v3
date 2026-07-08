@@ -1,7 +1,7 @@
 """Predictor training loss (DECISIONS `loss`, `target`):
 
     L = pinball(q10, q50, q90 vs CUMULATIVE log-return path) + lambda * direction_penalty
-        + COVERAGE_PENALTY_WEIGHT * coverage_penalty
+        + COVERAGE_PENALTY_WEIGHT * coverage_penalty + AUX_DIRECTION_WEIGHT * aux_direction
 
 - Targets are converted to the cumulative path (``target.cumsum`` over the horizon)
   inside ``predictor_loss``: the model predicts quantiles of the total (h+1)-step move
@@ -28,6 +28,12 @@
   self-limiting — the gradient is proportional to the coverage gap and vanishes at
   nominal, so it accelerates calibration without fighting pinball's optimum (the true
   quantile minimises both).
+- The auxiliary directional term (idea-04 amendment, DECISIONS `loss`) is BCE between
+  a training-only ``direction_logit`` (shared-trunk head, dropped at inference) and
+  the sign of the final-horizon cumulative close move. Optional: omitted (the default)
+  for every pre-existing caller, in which case ``aux`` is zero and contributes nothing
+  to ``total``. Hypothesis: a direct directional gradient enriches the shared encoder
+  representation so the quantile head's q50 sign becomes more accurate.
 
 All numeric parameters come from `constants.py`; this module hardcodes none.
 Tensor shapes:
@@ -42,6 +48,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import torch
+from torch.nn import functional as F
 
 from constants import DATA, EXECUTION, PREDICTOR
 
@@ -52,11 +59,17 @@ _Q90 = PREDICTOR.QUANTILES.index(0.90)  # upper-tail quantile index (== 2)
 
 
 class LossComponents(NamedTuple):
-    """Loss broken out for separate W&B logging (predictor-training.md smoke run)."""
+    """Loss broken out for separate W&B logging (predictor-training.md smoke run).
+
+    `aux` is the auxiliary directional BCE term (DECISIONS.md 'loss', idea-04
+    amendment): zero-valued and excluded from `total` whenever `predictor_loss` is
+    called without a `direction_logit` (every pre-existing caller).
+    """
 
     pinball: torch.Tensor
     direction: torch.Tensor
     coverage: torch.Tensor
+    aux: torch.Tensor
     total: torch.Tensor
 
 
@@ -145,15 +158,30 @@ def predictor_loss(
     fee_threshold: float = EXECUTION.FEE_THRESHOLD,
     quantiles: tuple[float, ...] = PREDICTOR.QUANTILES,
     coverage_weight: float = PREDICTOR.COVERAGE_PENALTY_WEIGHT,
+    direction_logit: torch.Tensor | None = None,
+    aux_weight: float = PREDICTOR.AUX_DIRECTION_WEIGHT,
 ) -> LossComponents:
     """Composite predictor loss; returns components for separate logging.
 
     ``target`` is the raw per-step log-return window from the loaders; it is converted
     to the cumulative path here (single conversion boundary for the training path).
+
+    ``direction_logit`` (idea-04 amendment, DECISIONS.md 'loss') is the optional
+    auxiliary directional head's output, shape ``(batch,)``: BCE against the sign of
+    the final-horizon cumulative close move, weighted by ``aux_weight`` into ``total``.
+    Omitted (the default) for every pre-existing caller -- ``aux`` is then a zero
+    tensor and contributes nothing to ``total``, so prior behaviour is unchanged.
     """
     target_cum = torch.cumsum(target, dim=1)
     pinball = pinball_loss(pred, target_cum, quantiles)
     direction = direction_penalty(pred, target_cum, fee_threshold)
     coverage = coverage_penalty(pred, target_cum)
-    total = pinball + lambda_ * direction + coverage_weight * coverage
-    return LossComponents(pinball=pinball, direction=direction, coverage=coverage, total=total)
+    if direction_logit is not None:
+        label = (target_cum[:, -1, _CLOSE_DIM] > 0.0).to(direction_logit.dtype)
+        aux = F.binary_cross_entropy_with_logits(direction_logit, label)
+    else:
+        aux = torch.zeros((), dtype=pred.dtype, device=pred.device)
+    total = pinball + lambda_ * direction + coverage_weight * coverage + aux_weight * aux
+    return LossComponents(
+        pinball=pinball, direction=direction, coverage=coverage, aux=aux, total=total
+    )

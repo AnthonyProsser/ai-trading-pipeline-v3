@@ -222,7 +222,9 @@ def test_train_one_fold_raises_on_nonfinite_val(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         training_mod,
         "_evaluate",
-        lambda *a, **k: (float("nan"), float("nan"), float("nan"), float("nan")),
+        lambda *a, **k: (
+            float("nan"), float("nan"), float("nan"), float("nan"), float("nan"),
+        ),
     )
     with pytest.raises(ValueError, match="non-finite validation loss"):
         train_one_fold(model, scaler, train_loader, val_loader, device="cpu", max_epochs=1)
@@ -246,12 +248,14 @@ def test_train_one_fold_restores_best_val_weights(monkeypatch: pytest.MonkeyPatc
 
     # Scripted val_total: epoch 1 is best (1.0), epochs 2-3 strictly worse. Patience (10)
     # is far higher than 2, so all three epochs run and "last" != "best".
-    scripted = iter([(0.1, 0.1, 0.0, 1.0), (0.1, 0.1, 0.0, 2.0), (0.1, 0.1, 0.0, 3.0)])
+    scripted = iter(
+        [(0.1, 0.1, 0.0, 0.0, 1.0), (0.1, 0.1, 0.0, 0.0, 2.0), (0.1, 0.1, 0.0, 0.0, 3.0)]
+    )
     snapshots: list[dict[str, object]] = []
 
     def fake_eval(
         m: torch.nn.Module, loader: object, device: object, use_amp: object
-    ) -> tuple[float, float, float, float]:
+    ) -> tuple[float, float, float, float, float]:
         snapshots.append(copy.deepcopy(m.state_dict()))
         return next(scripted)
 
@@ -618,7 +622,7 @@ def test_lr_decays_on_val_plateau(monkeypatch: pytest.MonkeyPatch) -> None:
     model = PatchTST(lookback=_LOOKBACK)
 
     # Constant val loss: epoch 1 improves from +inf, every later epoch is a plateau.
-    monkeypatch.setattr(training_mod, "_evaluate", lambda *a, **k: (0.1, 0.1, 0.0, 1.0))
+    monkeypatch.setattr(training_mod, "_evaluate", lambda *a, **k: (0.1, 0.1, 0.0, 0.0, 1.0))
 
     lrs: list[float] = []
 

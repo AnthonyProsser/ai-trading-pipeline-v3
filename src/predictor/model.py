@@ -110,8 +110,19 @@ class PatchTST(nn.Module):
         self.head = nn.Linear(
             self.num_tokens * PREDICTOR.D_MODEL, PREDICTOR.HORIZON * self.out_per_step
         )
+        # Auxiliary directional head (DECISIONS.md 'loss', idea-04 amendment):
+        # training-only, predicts the sign of the final-horizon cumulative close move
+        # from the same shared trunk. Never called by forward(); dropped at inference.
+        self.direction_head = nn.Linear(self.num_tokens * PREDICTOR.D_MODEL, 1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _trunk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Shared encoder trunk: RevIN -> patch embed -> Transformer encoder -> flat.
+
+        Returns (flat, sigma) where `flat` is `(batch, num_tokens * D_MODEL)` (fed to
+        both `head` and `direction_head`) and `sigma` is the per-window per-feature std
+        `(batch, 1, feat)` the quantile head rescales by (volatility-conditioned output
+        scale).
+        """
         batch = x.shape[0]
         # RevIN: standardise each window per feature. Any fixed affine the fold scaler
         # applied cancels out here, so the encoder sees the same distribution whether it
@@ -126,6 +137,11 @@ class PatchTST(nn.Module):
         tokens = self.patch_embed(patches) + self.pos_embed
         encoded = self.encoder(tokens)  # (batch, num_tokens, d_model)
         flat = encoded.reshape(batch, self.num_tokens * PREDICTOR.D_MODEL)
+        return flat, sigma
+
+    def _quantiles(self, flat: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
+        """Quantile head: `flat` -> monotone volatility-conditioned quantile tensor."""
+        batch = flat.shape[0]
         raw = self.head(flat).reshape(
             batch, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS, len(PREDICTOR.QUANTILES)
         )
@@ -149,3 +165,17 @@ class PatchTST(nn.Module):
         # scaler's fixed per-feature factor folds into the learned head weights.
         scale = sigma.squeeze(1)[:, None, :, None]  # (batch, 1, dims, 1)
         return y_norm * scale
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        flat, sigma = self._trunk(x)
+        return self._quantiles(flat, sigma)
+
+    def forward_with_direction(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """TRAINING-ONLY: shares the trunk + quantile head with `forward`, plus the
+        auxiliary directional logit. Returns `(quantiles, direction_logit)` where
+        `quantiles` is IDENTICAL to `forward(x)` and `direction_logit` has shape
+        `(batch,)`. Never called at inference (deploy/benchmark always use `forward`)."""
+        flat, sigma = self._trunk(x)
+        quantiles = self._quantiles(flat, sigma)
+        direction_logit = self.direction_head(flat).squeeze(-1)
+        return quantiles, direction_logit
