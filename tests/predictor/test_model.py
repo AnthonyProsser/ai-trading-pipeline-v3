@@ -105,3 +105,36 @@ def test_forward_is_shift_invariant_and_volatility_scaled() -> None:
 
     assert torch.allclose(model(x + 5.0), model(x), atol=1e-4)
     assert torch.allclose(model(x * 3.0), model(x) * 3.0, rtol=1e-3, atol=1e-5)
+
+
+def test_forward_maps_nine_input_features_to_five_output_dims() -> None:
+    # idea-01-timefeatures: NUM_INPUT_FEATURES (9: 5 OHLCV + 4 clock) is decoupled from
+    # NUM_OUTPUT_DIMS (5: OHLCV only) -- the model still predicts only OHLCV.
+    torch = pytest.importorskip("torch")
+    from src.predictor.model import PatchTST
+
+    assert DATA.NUM_INPUT_FEATURES == 9
+    assert PREDICTOR.NUM_OUTPUT_DIMS == 5
+    model = PatchTST(lookback=DATA.LOOKBACK).eval()
+    y = model(torch.randn(2, DATA.LOOKBACK, _IN))
+    assert y.shape == (2, PREDICTOR.HORIZON, 5, len(PREDICTOR.QUANTILES))
+
+
+def test_constant_clock_columns_do_not_blow_up_output() -> None:
+    # The last (NUM_INPUT_FEATURES - NUM_OUTPUT_DIMS) columns are clock features
+    # (tod_sin/cos, dow_sin/cos). Within a lookback window shorter than a day/week they
+    # are near-constant. If RevIN's per-window (x - mean) / sigma were applied to them,
+    # a near-zero sigma would blow the output to inf/nan -- they must bypass RevIN.
+    torch = pytest.importorskip("torch")
+    from src.predictor.model import PatchTST
+
+    torch.manual_seed(PREDICTOR.SEED)
+    lookback = PREDICTOR.PATCH_SIZE * 2
+    n_out = PREDICTOR.NUM_OUTPUT_DIMS
+    model = PatchTST(lookback=lookback).eval()
+    x = torch.randn(4, lookback, _IN)
+    x[..., n_out:] = 0.5  # simulate a within-24h/week window: clock cols exactly constant
+
+    y = model(x)
+
+    assert bool(torch.isfinite(y).all())
