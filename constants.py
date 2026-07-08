@@ -56,16 +56,29 @@ class DataConfig:
     SEARCH_CONFIRM_SEEDS: int = 3
 
     # Feature pipeline
-    NUM_INPUT_FEATURES: int = 5  # OHLC log-returns + log1p volume change
+    # idea-02-multiscale: 5 OHLC log-returns + log1p volume change, plus 4 multi-scale
+    # trailing momentum returns (rolling sums of close_logret) so the encoder gets
+    # explicit coarse-resolution momentum context instead of deriving it itself from
+    # 1440 individual 1-min returns. Inputs only -- the model still predicts just the
+    # 5 OHLCV dims (PredictorConfig.NUM_OUTPUT_DIMS).
+    NUM_INPUT_FEATURES: int = 9
     FEATURE_NAMES: tuple[str, ...] = (
         "open_logret",
         "high_logret",
         "low_logret",
         "close_logret",
         "vol_change",
+        "ret_5m",
+        "ret_15m",
+        "ret_60m",
+        "ret_240m",
     )
     # vol_change is +/-inf when current/prior volume is 0; degenerate value filled neutral.
     VOL_CHANGE_DEGENERATE_FILL: float = 0.0
+    # Trailing windows (minutes) for the multi-scale momentum return features above.
+    # Incomplete-window rows (the first window-1 output rows) reuse
+    # VOL_CHANGE_DEGENERATE_FILL as their neutral fill value.
+    MULTISCALE_RETURN_WINDOWS: tuple[int, ...] = (5, 15, 60, 240)
     LOOKBACK: int = 1_440  # SWEEP [240, 720, 1440] before long training run
     # Floor for log(volume_t / volume_{t-1}). When volume_t = 0 or the ratio is
     # tiny, the raw log goes to -inf; clip to this finite floor so the scaler

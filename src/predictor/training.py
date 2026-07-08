@@ -190,13 +190,16 @@ def build_fold_loaders(
     x_train = scaler.transform(train_feats, timestamps[fold.train_start : fold.train_end])
     x_val = scaler.transform(val_feats, timestamps[fold.val_start : fold.val_end])
 
+    # Targets stay OHLCV-only (idea-02-multiscale: features carries 4 extra multi-scale
+    # momentum columns as model INPUT, but the model only ever predicts NUM_OUTPUT_DIMS
+    # dims).
     train_loader = _WindowLoader(
-        _to_f32(x_train), _to_f32(train_feats),
+        _to_f32(x_train), _to_f32(train_feats[:, : PREDICTOR.NUM_OUTPUT_DIMS]),
         lookback=lookback, horizon=PREDICTOR.HORIZON, batch_size=batch_size,
         shuffle=True, drop_last=True, device=dev,
     )
     val_loader = _WindowLoader(
-        _to_f32(x_val), _to_f32(val_feats),
+        _to_f32(x_val), _to_f32(val_feats[:, : PREDICTOR.NUM_OUTPUT_DIMS]),
         lookback=lookback, horizon=PREDICTOR.HORIZON, batch_size=batch_size,
         shuffle=False, drop_last=False, device=dev,
     )

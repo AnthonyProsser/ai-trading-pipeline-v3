@@ -201,8 +201,12 @@ def run_benchmark_job(runner: RunnerLike, stem: str) -> None:
     x_scaled = scaler.transform_inference(slice_feats)
 
     emit("inference", n_windows=int(end - start - lookback - PREDICTOR.HORIZON + 1))
+    # Targets stay OHLCV-only (idea-02-multiscale: slice_feats/x_scaled carry 4 extra
+    # multi-scale momentum columns as model INPUT, but the model only ever predicts
+    # NUM_OUTPUT_DIMS dims) so pred and target_raw/target_cum shapes match downstream.
     pred, target_raw = _gather_predictions(
-        model, x_scaled, slice_feats, lookback=lookback, device=device
+        model, x_scaled, slice_feats[:, : PREDICTOR.NUM_OUTPUT_DIMS],
+        lookback=lookback, device=device,
     )
     target_cum = torch.cumsum(target_raw, dim=1)
 

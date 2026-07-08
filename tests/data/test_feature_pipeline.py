@@ -119,7 +119,7 @@ def test_multiscale_return_known_value_and_incomplete_window_fill() -> None:
     ohlcv = np.column_stack([closes, closes, closes, closes, np.full(n, 100.0)])
     feats = compute_features(ohlcv)
 
-    for window, name in zip(DATA.MULTISCALE_RETURN_WINDOWS, DATA.FEATURE_NAMES[5:]):
+    for window, name in zip(DATA.MULTISCALE_RETURN_WINDOWS, DATA.FEATURE_NAMES[5:], strict=True):
         idx = DATA.FEATURE_NAMES.index(name)
         # First fully-covered row: j = window - 1 (sums close_lr[0:window]).
         assert np.isclose(feats[window - 1, idx], window * r, atol=1e-8)
