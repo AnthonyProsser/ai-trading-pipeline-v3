@@ -159,3 +159,57 @@ def test_predictor_loss_includes_weighted_coverage_component() -> None:
         + PREDICTOR.COVERAGE_PENALTY_WEIGHT * float(comp.coverage)
     )
     assert float(comp.total) == pytest.approx(expected, rel=1e-5)
+
+
+def test_aux_direction_term_zero_and_total_unchanged_without_logit() -> None:
+    # Backward compat: predictor_loss(pred, target) called with no direction_logit
+    # (every pre-existing caller) must yield aux == 0 and the SAME total as before
+    # this change — the idea-4 aux head is training-only and opt-in via the kwarg.
+    gen = torch.Generator().manual_seed(2)
+    pred = torch.randn((8, _H, _D, _Q), generator=gen) * 0.01
+    target = torch.randn((8, _H, _D), generator=gen) * 0.01
+    comp = predictor_loss(pred, target)
+    assert float(comp.aux) == pytest.approx(0.0)
+    expected = (
+        float(comp.pinball)
+        + PREDICTOR.DIRECTION_PENALTY_LAMBDA * float(comp.direction)
+        + PREDICTOR.COVERAGE_PENALTY_WEIGHT * float(comp.coverage)
+    )
+    assert float(comp.total) == pytest.approx(expected, rel=1e-5)
+
+
+def test_aux_direction_term_penalises_wrong_sign_logit() -> None:
+    # aux is BCE(direction_logit, label) where label = 1{final-horizon cumulative
+    # close move > 0}. A confidently WRONG-signed logit must score high aux; a
+    # confidently CORRECT-signed logit must score aux ~ 0.
+    gen = torch.Generator().manual_seed(3)
+    pred = torch.randn((8, _H, _D, _Q), generator=gen) * 0.01
+    target = torch.randn((8, _H, _D), generator=gen) * 0.01
+    target_cum_final_close = torch.cumsum(target, dim=1)[:, -1, _CLOSE]
+    label = (target_cum_final_close > 0.0).float()
+
+    correct_logit = (label * 2.0 - 1.0) * 10.0  # +10 when label=1, -10 when label=0
+    wrong_logit = -correct_logit
+
+    comp_correct = predictor_loss(pred, target, direction_logit=correct_logit)
+    comp_wrong = predictor_loss(pred, target, direction_logit=wrong_logit)
+
+    assert float(comp_correct.aux) == pytest.approx(0.0, abs=1e-3)
+    assert float(comp_wrong.aux) > 5.0
+
+
+def test_aux_direction_term_is_weighted_into_total() -> None:
+    # total gains aux_weight * aux on top of the pre-existing three terms.
+    gen = torch.Generator().manual_seed(4)
+    pred = torch.randn((8, _H, _D, _Q), generator=gen) * 0.01
+    target = torch.randn((8, _H, _D), generator=gen) * 0.01
+    logit = torch.randn((8,), generator=gen)
+
+    comp = predictor_loss(pred, target, direction_logit=logit)
+    expected = (
+        float(comp.pinball)
+        + PREDICTOR.DIRECTION_PENALTY_LAMBDA * float(comp.direction)
+        + PREDICTOR.COVERAGE_PENALTY_WEIGHT * float(comp.coverage)
+        + PREDICTOR.AUX_DIRECTION_WEIGHT * float(comp.aux)
+    )
+    assert float(comp.total) == pytest.approx(expected, rel=1e-5)

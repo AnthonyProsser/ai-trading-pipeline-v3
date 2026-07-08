@@ -92,6 +92,72 @@ def test_quantile_outputs_are_monotone_by_construction() -> None:
         assert bool(torch.all(y[..., lo] <= y[..., lo + 1]))
 
 
+def test_direction_head_exists_with_expected_shape() -> None:
+    # idea-04-auxdirhead: a training-only auxiliary head predicting the sign of the
+    # final-horizon cumulative close move, sharing the encoder trunk with `head`.
+    torch = pytest.importorskip("torch")
+    from src.predictor.model import PatchTST
+
+    model = PatchTST(lookback=DATA.LOOKBACK)
+    assert isinstance(model.direction_head, torch.nn.Linear)
+    assert model.direction_head.in_features == model.num_tokens * PREDICTOR.D_MODEL
+    assert model.direction_head.out_features == 1
+
+
+def test_forward_with_direction_matches_forward_quantiles_and_logit_shape() -> None:
+    # forward_with_direction shares the trunk + quantile head with forward(): for the
+    # same input the quantile tensors must be IDENTICAL (not just close), and the
+    # direction logit must be (batch,).
+    torch = pytest.importorskip("torch")
+    from src.predictor.model import PatchTST
+
+    torch.manual_seed(PREDICTOR.SEED)
+    model = PatchTST(lookback=DATA.LOOKBACK).eval()
+    x = torch.randn(4, DATA.LOOKBACK, _IN)
+
+    y = model(x)
+    quantiles, logit = model.forward_with_direction(x)
+
+    assert torch.allclose(quantiles, y)
+    assert quantiles.shape == (4, *_OUT)
+    assert logit.shape == (4,)
+    assert bool(torch.isfinite(logit).all())
+
+
+def test_forward_signature_and_return_unchanged() -> None:
+    # forward(x) MUST keep returning ONLY the quantile tensor -- many callers
+    # (_gather, deploy, benchmark) depend on this exact interface.
+    torch = pytest.importorskip("torch")
+    from src.predictor.model import PatchTST
+
+    model = PatchTST(lookback=DATA.LOOKBACK).eval()
+    x = torch.randn(2, DATA.LOOKBACK, _IN)
+    out = model(x)
+    assert isinstance(out, torch.Tensor)
+    assert out.shape == (2, *_OUT)
+
+
+def test_aux_direction_gradient_flows_to_direction_head() -> None:
+    # One optimizer step's worth of backward() must populate direction_head's grad --
+    # the BCE aux term actually reaches the new head's parameters.
+    torch = pytest.importorskip("torch")
+    from src.predictor.loss import predictor_loss
+    from src.predictor.model import PatchTST
+
+    torch.manual_seed(PREDICTOR.SEED)
+    model = PatchTST(lookback=DATA.LOOKBACK)
+    x = torch.randn(4, DATA.LOOKBACK, _IN)
+    target = torch.randn(4, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS) * 0.01
+
+    quantiles, logit = model.forward_with_direction(x)
+    comp = predictor_loss(quantiles, target, direction_logit=logit)
+    comp.total.backward()  # type: ignore[no-untyped-call]
+
+    assert model.direction_head.weight.grad is not None
+    assert bool(torch.isfinite(model.direction_head.weight.grad).all())
+    assert float(model.direction_head.weight.grad.abs().sum()) > 0.0
+
+
 def test_forward_is_shift_invariant_and_volatility_scaled() -> None:
     # RevIN-style instance normalization: a constant shift of the input window must not
     # change the forecast, and rescaling the window by k must rescale the predicted
