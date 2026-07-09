@@ -115,6 +115,11 @@ def test_forward_is_shift_invariant_and_volatility_scaled() -> None:
 
     torch.manual_seed(PREDICTOR.SEED)
     model = PatchTST(lookback=PREDICTOR.PATCH_SIZE * 2).eval()
+    # Re-seed before drawing x so its values don't depend on how many random numbers
+    # model construction consumed (which varies with NUM_INPUT_FEATURES) -- otherwise
+    # an unrelated near-zero-output element can land just outside the fixed tolerance
+    # purely by chance of RNG state, not because the invariance actually broke.
+    torch.manual_seed(PREDICTOR.SEED)
     x = torch.randn(4, PREDICTOR.PATCH_SIZE * 2, _IN)
 
     assert torch.allclose(model(x + 5.0), model(x), atol=1e-4)

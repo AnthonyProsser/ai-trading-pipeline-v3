@@ -56,16 +56,24 @@ class DataConfig:
     SEARCH_CONFIRM_SEEDS: int = 3
 
     # Feature pipeline
-    NUM_INPUT_FEATURES: int = 5  # OHLC log-returns + log1p volume change
+    # idea-05-swinglevels: 5 OHLC log-returns + log1p volume change, plus 2 swing-
+    # high/low distance features (signed normalized distance from close to the
+    # rolling SWING_WINDOW-bar high/low). Inputs only -- the model still predicts
+    # just the 5 OHLCV dims (PredictorConfig.NUM_OUTPUT_DIMS).
+    NUM_INPUT_FEATURES: int = 7
     FEATURE_NAMES: tuple[str, ...] = (
         "open_logret",
         "high_logret",
         "low_logret",
         "close_logret",
         "vol_change",
+        "dist_swing_high",
+        "dist_swing_low",
     )
     # vol_change is +/-inf when current/prior volume is 0; degenerate value filled neutral.
     VOL_CHANGE_DEGENERATE_FILL: float = 0.0
+    # Rolling window (bars) for the swing-high/low distance features above.
+    SWING_WINDOW: int = 240
     LOOKBACK: int = 1_440  # SWEEP [240, 720, 1440] before long training run
     # Floor for log(volume_t / volume_{t-1}). When volume_t = 0 or the ratio is
     # tiny, the raw log goes to -inf; clip to this finite floor so the scaler

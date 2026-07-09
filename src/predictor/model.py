@@ -60,10 +60,11 @@ class PatchTST(nn.Module):
                 f"only channel_mixing patch embedding is implemented, not "
                 f"{PREDICTOR.PATCH_EMBED_MODE!r}"
             )
-        if PREDICTOR.NUM_OUTPUT_DIMS != DATA.NUM_INPUT_FEATURES:
+        if PREDICTOR.NUM_OUTPUT_DIMS > DATA.NUM_INPUT_FEATURES:
             raise ValueError(
-                "volatility-conditioned output scaling maps each output dim to its "
-                f"input feature 1:1; NUM_OUTPUT_DIMS={PREDICTOR.NUM_OUTPUT_DIMS} != "
+                "output dims must be a prefix of the input features (volatility-"
+                f"conditioned output scaling maps each output dim 1:1 to its input "
+                f"feature); NUM_OUTPUT_DIMS={PREDICTOR.NUM_OUTPUT_DIMS} > "
                 f"NUM_INPUT_FEATURES={DATA.NUM_INPUT_FEATURES}"
             )
         if tuple(sorted(PREDICTOR.QUANTILES)) != PREDICTOR.QUANTILES:
@@ -146,6 +147,9 @@ class PatchTST(nn.Module):
 
         # Volatility-conditioned output scale: each output dim is rescaled by its input
         # feature's window sigma, so quantile spread tracks the current regime. The fold
-        # scaler's fixed per-feature factor folds into the learned head weights.
-        scale = sigma.squeeze(1)[:, None, :, None]  # (batch, 1, dims, 1)
+        # scaler's fixed per-feature factor folds into the learned head weights. sigma
+        # covers all NUM_INPUT_FEATURES (idea-05-swinglevels: RevIN applies to every
+        # input, including the 2 swing-distance columns), so it's sliced to the OHLCV
+        # prefix here to match y_norm's NUM_OUTPUT_DIMS.
+        scale = sigma.squeeze(1)[:, : PREDICTOR.NUM_OUTPUT_DIMS][:, None, :, None]
         return y_norm * scale
