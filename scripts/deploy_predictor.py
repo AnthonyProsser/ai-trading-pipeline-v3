@@ -84,9 +84,10 @@ def gather_predictions(
     with torch.no_grad():
         for x_batch, y_batch in loader:
             preds.append(enforce_geometry(model(x_batch)))
-            # Model output = cumulative log-return path (TARGET_SEMANTICS); convert the
-            # raw per-step targets to the same space so the gates compare like with like.
-            targets.append(y_batch.cumsum(dim=1))
+            # Model output = cumulative REALIZED-VARIANCE path (TARGET_SEMANTICS); square
+            # then convert the raw per-step targets to the same space so the gates
+            # compare like with like (vol pivot, 2026-07-09).
+            targets.append(y_batch.mul(y_batch).cumsum(dim=1))
     return torch.cat(preds), torch.cat(targets)
 
 

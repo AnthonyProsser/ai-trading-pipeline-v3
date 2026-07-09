@@ -454,11 +454,11 @@ def _collect_predictions(
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Run `model` over every batch in `loader` with geometry enforcement, concatenated
-    to CPU. Targets are converted to the CUMULATIVE log-return path (the model's output
-    space, PredictorConfig.TARGET_SEMANTICS) so gate metrics compare like with like.
-    Shared by evaluate_q90_coverage / evaluate_directional_accuracy so both metrics --
-    and any future gate metric -- read predictions the identical way deploy does
-    (predictor-contract.md geometry enforcement at every inference step)."""
+    to CPU. Targets are converted to the CUMULATIVE REALIZED-VARIANCE path (the model's
+    output space, PredictorConfig.TARGET_SEMANTICS) so gate metrics compare like with
+    like. Shared by evaluate_q90_coverage / evaluate_directional_accuracy so both
+    metrics -- and any future gate metric -- read predictions the identical way deploy
+    does (predictor-contract.md geometry enforcement at every inference step)."""
     model.eval()
     preds: list[torch.Tensor] = []
     targets: list[torch.Tensor] = []
@@ -467,7 +467,7 @@ def _collect_predictions(
             # Both sides -> CPU explicitly: the _WindowLoader keeps y device-resident, so
             # leaving it in place would compare a CPU pred against a CUDA target.
             preds.append(enforce_geometry(model(x.to(device))).cpu())
-            targets.append(y.cumsum(dim=1).cpu())
+            targets.append(y.mul(y).cumsum(dim=1).cpu())
     if not preds:
         raise RuntimeError("loader yielded no batches — cannot evaluate predictions")
     return torch.cat(preds), torch.cat(targets)

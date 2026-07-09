@@ -40,10 +40,14 @@ def target_to_model_space(target: torch.Tensor, semantics: str) -> torch.Tensor:
     """Map raw per-step log-return targets into the model's prediction space.
 
     ``per_step_logret`` predicts each step's move (identity); ``cumulative_logret``
-    predicts the running-sum path, so the target is cumsummed over the horizon dim.
+    predicts the running-sum path, so the target is cumsummed over the horizon dim;
+    ``cumulative_sqret`` (vol pivot, 2026-07-09) predicts the cumulative REALIZED-
+    VARIANCE path, so the target is squared elementwise THEN cumsummed.
     """
     if semantics == "cumulative_logret":
         return torch.cumsum(target, dim=1)
+    if semantics == "cumulative_sqret":
+        return torch.cumsum(target * target, dim=1)
     return target
 
 

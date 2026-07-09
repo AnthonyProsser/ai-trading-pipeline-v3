@@ -111,9 +111,10 @@ class PredictorConfig:
     QUANTILES: tuple[float, float, float] = (0.10, 0.50, 0.90)
     NUM_OUTPUT_DIMS: int = 5  # OHLCV
     # Prediction/target convention (DECISIONS.md 'target'): quantiles of the CUMULATIVE
-    # log-return path from the forecast origin, per horizon step. Embedded in every
-    # checkpoint; deploy refuses a checkpoint trained under a different convention.
-    TARGET_SEMANTICS: str = "cumulative_logret"
+    # SQUARED log-return path (realized-variance path) from the forecast origin, per
+    # horizon step. Embedded in every checkpoint; deploy refuses a checkpoint trained
+    # under a different convention.
+    TARGET_SEMANTICS: str = "cumulative_sqret"
 
     # Rollout geometry enforcement (predictor-contract.md §"Geometry enforcement")
     # H >= max(O,C) and L <= min(O,C) per emitted step and quantile; a violating
@@ -123,7 +124,10 @@ class PredictorConfig:
     # Loss: pinball on the cumulative path + direction penalty on the FINAL-horizon
     # cumulative close only (DECISIONS.md 'loss'). The fee is a per-trade round-trip
     # cost, so it is compared against the whole horizon move, never a single step.
-    DIRECTION_PENALTY_LAMBDA: float = 1.75  # range [1.5, 2.0]
+    # Direction penalty RETIRED under the vol target (DECISIONS.md 'loss' amended
+    # 2026-07-09): direction is falsified and meaningless for a variance target.
+    # Pinned to 0.0 -- predictor_loss's guard makes the term a hard no-op at this value.
+    DIRECTION_PENALTY_LAMBDA: float = 0.0
     # Coverage penalty (DECISIONS.md 'loss', amended 2026-07-01): squared gap between
     # smooth empirical batch coverage and the nominal tail levels (0.10/0.90), close
     # dim only, averaged over horizon steps. Directly optimizes the two calibration

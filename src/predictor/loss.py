@@ -1,22 +1,23 @@
 """Predictor training loss (DECISIONS `loss`, `target`):
 
-    L = pinball(q10, q50, q90 vs CUMULATIVE log-return path) + lambda * direction_penalty
+    L = pinball(q10, q50, q90 vs CUMULATIVE REALIZED-VARIANCE path)
         + COVERAGE_PENALTY_WEIGHT * coverage_penalty
 
-- Targets are converted to the cumulative path (``target.cumsum`` over the horizon)
-  inside ``predictor_loss``: the model predicts quantiles of the total (h+1)-step move
-  because quantiles are not additive — per-step quantiles cannot yield a calibrated
-  interval for the horizon move the trader actually trades.
+- Targets are converted to the cumulative REALIZED-VARIANCE path (``(target *
+  target).cumsum`` over the horizon) inside ``predictor_loss``: directional prediction
+  is falsified (vol pivot, 2026-07-09), so the model now predicts quantiles of the
+  cumulative SQUARED per-step log-return -- the running realized-variance path, whose
+  final step is the total realized variance over the horizon (sqrt = realized vol).
+  Quantiles are still not additive, so per-step quantiles cannot yield a calibrated
+  interval for the horizon quantity the trader would read; predicting the cumulative
+  path models it directly, same as the retired log-return target did.
 - Pinball loss is evaluated independently per (step, dim, quantile).
-- The direction penalty fires on the **close** dimension at the **final horizon step
-  only**. ``FEE_THRESHOLD`` is a per-trade round-trip cost, so it is compared against
-  the whole-horizon cumulative move, never a single 1-minute step: the previous
-  per-step form demanded |q50| >= 0.62% per minute (~12x the true per-minute median
-  scale), which turned every q50 into a fee-scaled sign flag and destroyed median
-  calibration. Confining the penalty to the one (final step, q50, close) coordinate
-  keeps the tradeable-direction pressure while leaving the rest of the quantile
-  surface honest. On a flat market the directional PnL is 0 and the penalty floors at
-  ``FEE_THRESHOLD`` — the calibrated baseline the trend-loss regression test asserts.
+- The direction penalty (``direction_penalty``, below) is RETIRED under the vol
+  target: direction is falsified, so a sign-agreement penalty on a variance
+  prediction is meaningless. The function is kept as-is (tests reference it
+  directly) but ``predictor_loss`` only calls it when ``lambda_ != 0.0``; the
+  default ``PREDICTOR.DIRECTION_PENALTY_LAMBDA = 0.0`` makes it a hard no-op (zero
+  contribution, no wasted compute/grad) rather than merely re-weighted small.
 - The coverage penalty (amended into DECISIONS `loss` 2026-07-01) is the squared gap
   between smooth empirical batch coverage (sigmoid indicator whose width is
   ``COVERAGE_PENALTY_TEMPERATURE_FRAC`` x the batch's per-step close-target std) and
@@ -34,8 +35,8 @@ Tensor shapes:
     pred   : (batch, HORIZON, NUM_OUTPUT_DIMS, NUM_QUANTILES)  cumulative quantiles,
              quantile index 0=q10, 1=q50, 2=q90
     target : (batch, HORIZON, NUM_OUTPUT_DIMS)  per-step log-returns (raw, dim order
-             O,H,L,C,V); predictor_loss cumsums them. pinball_loss/direction_penalty
-             take an ALREADY-cumulative target.
+             O,H,L,C,V); predictor_loss squares then cumsums them. pinball_loss/
+             direction_penalty/coverage_penalty take an ALREADY-cumulative target.
 """
 from __future__ import annotations
 
@@ -148,12 +149,19 @@ def predictor_loss(
 ) -> LossComponents:
     """Composite predictor loss; returns components for separate logging.
 
-    ``target`` is the raw per-step log-return window from the loaders; it is converted
-    to the cumulative path here (single conversion boundary for the training path).
+    ``target`` is the raw per-step log-return window from the loaders; it is squared
+    then converted to the cumulative REALIZED-VARIANCE path here (single conversion
+    boundary for the training path). Direction penalty is retired under this target
+    (meaningless for a variance prediction) and is skipped entirely when
+    ``lambda_ == 0.0`` (the default) so no compute/grad is wasted on it.
     """
-    target_cum = torch.cumsum(target, dim=1)
+    target_cum = torch.cumsum(target * target, dim=1)
     pinball = pinball_loss(pred, target_cum, quantiles)
-    direction = direction_penalty(pred, target_cum, fee_threshold)
+    direction = (
+        direction_penalty(pred, target_cum, fee_threshold)
+        if lambda_ != 0.0
+        else torch.zeros((), dtype=pred.dtype, device=pred.device)
+    )
     coverage = coverage_penalty(pred, target_cum)
     total = pinball + lambda_ * direction + coverage_weight * coverage
     return LossComponents(pinball=pinball, direction=direction, coverage=coverage, total=total)
