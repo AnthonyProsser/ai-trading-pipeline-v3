@@ -115,7 +115,7 @@ def test_run_benchmark_job_end_to_end_writes_result(
     _write_checkpoint(checkpoint_dir, _STEM, semantics=PREDICTOR.TARGET_SEMANTICS)
     runner = _StubRunner(checkpoint_dir, benchmark_dir)
 
-    n = 260
+    n = 250 + PREDICTOR.HORIZON  # horizon-independent: TEST slice must exceed lookback+horizon
     rng = np.random.default_rng(1)
     features = rng.normal(0.0, 0.01, size=(n, _NDIM)).astype(np.float64)
     feature_ts = (

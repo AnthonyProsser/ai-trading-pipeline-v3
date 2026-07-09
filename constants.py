@@ -82,7 +82,7 @@ class DataConfig:
 # ============================================================
 @dataclass(frozen=True)
 class PredictorConfig:
-    HORIZON: int = 15  # direct multi-step; autoregression banned
+    HORIZON: int = 240  # direct multi-step; autoregression banned
     PATCH_SIZE: int = 16  # PatchTST: 1440 / 16 = 90 tokens
 
     # PatchTST encoder architecture (predictor-training.md §"Architecture").

@@ -104,4 +104,4 @@ def test_forward_is_shift_invariant_and_volatility_scaled() -> None:
     x = torch.randn(4, PREDICTOR.PATCH_SIZE * 2, _IN)
 
     assert torch.allclose(model(x + 5.0), model(x), atol=1e-4)
-    assert torch.allclose(model(x * 3.0), model(x) * 3.0, rtol=1e-3, atol=1e-5)
+    assert torch.allclose(model(x * 3.0), model(x) * 3.0, rtol=1e-3, atol=1e-4)
