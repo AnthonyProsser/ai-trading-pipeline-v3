@@ -44,6 +44,9 @@ class _Runner:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="re-score even if result JSON exists")
+    ap.add_argument("--ignore-constants", action="store_true",
+                    help="skip constants-sha gate; safe only when the head/arch shape is "
+                         "unique (e.g. a distinct HORIZON) so load_state_dict rejects other recipes")
     args = ap.parse_args()
 
     finished = REPO_ROOT / PREDICTOR.FINISHED_DIR
@@ -62,7 +65,7 @@ def main() -> int:
             skipped_done += 1
             continue
         meta = read_checkpoint_meta(w)
-        if meta.get("constants_sha256") != cur_sha:
+        if not args.ignore_constants and meta.get("constants_sha256") != cur_sha:
             skipped_recipe += 1  # different recipe (branch) — not scoreable under current code
             continue
         try:
