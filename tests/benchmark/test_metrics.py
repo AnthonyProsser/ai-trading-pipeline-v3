@@ -67,6 +67,16 @@ def test_target_to_model_space_cumulative_is_cumsum() -> None:
     assert torch.allclose(out, expected)
 
 
+def test_target_to_model_space_cumulative_sqret_is_squared_cumsum() -> None:
+    # Vol pivot (2026-07-09): the realized-variance target squares each per-step
+    # log-return before cumsumming (cumulative realized-variance path), distinct from
+    # the signed cumulative_logret branch above.
+    target = _make_target([0.1, -0.2, 0.3])
+    out = target_to_model_space(target, "cumulative_sqret")
+    expected = torch.cumsum(target * target, dim=1)
+    assert torch.allclose(out, expected)
+
+
 # --- excursion_metrics (the Krafer-style metric) ---------------------------
 
 def test_excursion_captured_fraction_per_step() -> None:

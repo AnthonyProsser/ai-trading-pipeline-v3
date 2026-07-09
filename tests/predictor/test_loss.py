@@ -159,3 +159,49 @@ def test_predictor_loss_includes_weighted_coverage_component() -> None:
         + PREDICTOR.COVERAGE_PENALTY_WEIGHT * float(comp.coverage)
     )
     assert float(comp.total) == pytest.approx(expected, rel=1e-5)
+
+
+# --- Vol pivot (2026-07-09, branch pivot-vol-01): cumulative REALIZED-VARIANCE target ---
+# Target reformulation: cumulative log-return path -> cumulative SQUARED log-return path
+# (realized-variance path). Direction penalty retired (DIRECTION_PENALTY_LAMBDA = 0.0):
+# direction is falsified, meaningless for a variance target.
+
+
+def test_target_semantics_is_cumulative_sqret() -> None:
+    assert PREDICTOR.TARGET_SEMANTICS == "cumulative_sqret"
+
+
+def test_direction_penalty_lambda_retired_to_zero() -> None:
+    assert PREDICTOR.DIRECTION_PENALTY_LAMBDA == 0.0
+
+
+def test_predictor_loss_target_conversion_is_squared_then_cumsum() -> None:
+    # predictor_loss's single conversion boundary: target_cum = cumsum(target ** 2),
+    # NOT cumsum(target). A prediction equal to the squared-cumsum target at every
+    # quantile must have exactly zero pinball loss.
+    gen = torch.Generator().manual_seed(2)
+    target = torch.randn((4, _H, _D), generator=gen) * 0.01
+    target_sqcum = (target * target).cumsum(dim=1)
+    pred = target_sqcum.unsqueeze(-1).expand(-1, -1, -1, _Q).contiguous()
+    comp = predictor_loss(pred, target, lambda_=0.0)
+    assert comp.pinball.item() == pytest.approx(0.0, abs=1e-9)
+
+    # A prediction matching the OLD (unsquared, signed) cumulative boundary must now
+    # score nonzero pinball -- the conversion is no longer plain cumsum.
+    old_cum = target.cumsum(dim=1)
+    pred_old = old_cum.unsqueeze(-1).expand(-1, -1, -1, _Q).contiguous()
+    comp_old = predictor_loss(pred_old, target, lambda_=0.0)
+    assert comp_old.pinball.item() > 1e-6
+
+
+def test_direction_component_zero_exactly_when_lambda_zero() -> None:
+    # Direction penalty is retired under the vol target: with lambda_=0.0 (the default,
+    # PREDICTOR.DIRECTION_PENALTY_LAMBDA) the direction component must be an exact zero,
+    # not merely weighted to zero -- no wasted compute/grad on a meaningless term.
+    gen = torch.Generator().manual_seed(3)
+    pred = torch.randn((4, _H, _D, _Q), generator=gen) * 0.01
+    target = torch.randn((4, _H, _D), generator=gen) * 0.01
+    comp = predictor_loss(pred, target, lambda_=0.0)
+    assert comp.direction.item() == 0.0
+    expected_total = comp.pinball.item() + PREDICTOR.COVERAGE_PENALTY_WEIGHT * comp.coverage.item()
+    assert comp.total.item() == pytest.approx(expected_total, rel=1e-6)

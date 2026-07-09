@@ -83,9 +83,11 @@ def test_variance_floor_loss_strictly_positive() -> None:
 
 
 def test_trend_loss_constant_candles_known_baseline() -> None:
-    # Bug #2: flat input collapsed the trend loss to zero (no gradient). Constant
-    # candles → zero log-return target → directional PnL is 0, so the penalty floors
-    # at FEE_THRESHOLD: a flat market cannot beat round-trip fees. Known, non-zero.
+    # Bug #2 (historical, pre-vol-pivot): flat input collapsed the trend loss to zero
+    # (no gradient). Constant candles -> zero log-return target -> directional PnL is
+    # 0, so the penalty floors at FEE_THRESHOLD: a flat market cannot beat round-trip
+    # fees. `direction_penalty` itself is unchanged (kept for its own tests below) --
+    # this still pins its known, non-zero baseline in isolation.
     torch = pytest.importorskip("torch")
     from src.predictor.loss import direction_penalty
 
@@ -96,6 +98,25 @@ def test_trend_loss_constant_candles_known_baseline() -> None:
     penalty = direction_penalty(pred, target)
     assert penalty.item() == pytest.approx(EXECUTION.FEE_THRESHOLD)
     assert penalty.item() > 0.0
+
+
+def test_trend_loss_retired_in_predictor_loss_under_vol_pivot() -> None:
+    # REPURPOSED (2026-07-09, vol pivot, branch pivot-vol-01): direction is falsified
+    # and the term is meaningless for a variance target, so DIRECTION_PENALTY_LAMBDA is
+    # now pinned to 0.0 in constants.py. The composite predictor_loss must therefore
+    # contribute EXACTLY zero direction loss for the very scenario (flat candles) that
+    # used to floor non-zero at FEE_THRESHOLD directly -- proving the term is inert in
+    # the actual training loss, not merely re-weighted small.
+    torch = pytest.importorskip("torch")
+    from src.predictor.loss import predictor_loss
+
+    pred_shape = (8, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS, len(PREDICTOR.QUANTILES))
+    pred = torch.randn(pred_shape)  # any prediction
+    target = torch.zeros((8, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS))  # flat candles
+
+    comp = predictor_loss(pred, target)  # default lambda_ = PREDICTOR.DIRECTION_PENALTY_LAMBDA
+    assert PREDICTOR.DIRECTION_PENALTY_LAMBDA == 0.0
+    assert comp.direction.item() == 0.0
 
 
 def test_direction_penalty_final_horizon_cumulative() -> None:
@@ -130,16 +151,17 @@ def test_direction_penalty_final_horizon_cumulative() -> None:
 
 
 def test_pinball_is_zero_when_pred_equals_cumulative_target() -> None:
-    # predictor_loss trains against the CUMULATIVE log-return path (quantiles are not
-    # additive, so per-step quantiles cannot give a calibrated interval for the h-step
-    # move). A prediction equal to the cumulative target at every quantile has exactly
-    # zero pinball loss.
+    # predictor_loss trains against the CUMULATIVE REALIZED-VARIANCE path (vol pivot,
+    # 2026-07-09): quantiles are not additive, so per-step quantiles cannot give a
+    # calibrated interval for the h-step move, and the model now predicts variance
+    # (squared log-return) rather than signed log-return. A prediction equal to the
+    # squared-then-cumsummed target at every quantile has exactly zero pinball loss.
     torch = pytest.importorskip("torch")
     from src.predictor.loss import predictor_loss
 
     gen = torch.Generator().manual_seed(1)
     target = torch.randn((4, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS), generator=gen) * 0.01
-    cum = torch.cumsum(target, dim=1)
+    cum = torch.cumsum(target * target, dim=1)
     pred = cum.unsqueeze(-1).expand(-1, -1, -1, len(PREDICTOR.QUANTILES)).contiguous()
 
     comp = predictor_loss(pred, target)
