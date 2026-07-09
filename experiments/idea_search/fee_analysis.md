@@ -25,3 +25,19 @@ time, but wins and losses are equal-sized (right on small moves, wrong on the bi
   more; (c) accept that 1-min OHLCV -> 15-min move may be near-efficient and the edge
   must come from different data (order book, cross-asset) or a longer horizon where moves
   dwarf fees. This echoes the horizon-sweep conclusion.
+
+## Threshold sweep (2026-07-09, decisive)
+Pooled 150k baseline windows, swept the |q50| entry threshold:
+| thr | trades | mean_gross | net | winrate | mean|move| |
+|---|---|---|---|---|---|
+| 0 | 27516 | -0.00003 | -0.0062 | 0.508 | 0.0023 |
+| 1x fee | 10311 | -0.00006 | -0.0063 | 0.505 | 0.0028 |
+| 4x fee | 690 | +0.00025 | -0.0060 | 0.519 | 0.0045 |
+| 8x fee | 54 | -0.00005 | -0.0063 | 0.500 | 0.0045 |
+
+**No profitable subset at any confidence.** Even |q50|>2.5% predictions realize ~0.45% moves
+(< 0.62% fee) at 52% winrate. Typical gate-clearing 15-min move ~0.23-0.45% < fee. The
+predictor-side search (features/lookback/loss/horizon) is EXHAUSTED for profitability:
+moves are structurally smaller than the fee and DA never creates magnitude edge.
+Next step is a STRATEGIC decision (longer horizon product / lower-fee venue / different
+data source / drop directional trading) — not another predictor idea.

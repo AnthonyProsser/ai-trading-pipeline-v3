@@ -21,3 +21,17 @@ Answer whenever you're back at the computer; none block the loop.
 6. Storage: **Keep everything** in finished/.
 7. Benchmark app arch-awareness: **Fine as-is** (checkout matching branch to benchmark).
 Parked: old rejections — idea-1 running; skip idea-4 (real calibration defect), idea-3 low value.
+
+---
+## STRATEGIC DECISION NEEDED (2026-07-09) — feature loop PAUSED
+Evidence now comprehensive (baseline + ideas 1-5 + threshold sweep): the predictor cannot be
+made net-of-fee profitable by any predictor-side lever. 15-min BTC moves (~0.23-0.45%) are
+structurally smaller than the 0.62% round-trip fee, and DA stays ~0.50-0.52 with zero
+magnitude edge at every confidence level. I paused rather than grind VAP/absorption/wicks
+(they'd repeat the null and burn GPU/tokens). Which direction?
+  A. Longer horizon (hours/days) so moves dwarf fees — but horizon-sweep saw DA stay ~coin-flip; would need a real signal, and it's a different product than a 15-min bot.
+  B. Lower-fee assumption (maker-only, or a cheaper venue) — but even at ZERO fee, gross expectancy is ~0, so this alone doesn't fix it.
+  C. Different data source (order book / on-chain / cross-asset) — the video's Tier-3; 1-min OHLCV appears near-efficient for 15-min direction.
+  D. Drop directional prediction; pivot the project's premise.
+  E. Continue features anyway (I'll do it if you want, but I expect null).
+Also still open: Q1-8 above + whether to merge idea-2/idea-5 (both beat baseline on DA but null on PnL).
