@@ -61,9 +61,11 @@ def main() -> int:
     for w in sorted(FIN.glob(f"*{PREDICTOR.CHECKPOINT_WEIGHTS_SUFFIX}")):
         stem = w.name[: -len(PREDICTOR.CHECKPOINT_WEIGHTS_SUFFIX)]
         tag = parse_run_tag(stem)
-        if tag is None or tag.git_sha != git_sha:
+        if tag is None:
             continue
         meta = read_checkpoint_meta(w)
+        if meta.get("target_semantics") != PREDICTOR.TARGET_SEMANTICS:
+            continue  # only this branch's recipe (vol run is the sole cumulative_sqret run)
         lookback = int(meta["lookback"])  # type: ignore[arg-type]
         model = PatchTST(lookback=lookback)
         model.load_state_dict(torch.load(w, weights_only=True)["state_dict"])
