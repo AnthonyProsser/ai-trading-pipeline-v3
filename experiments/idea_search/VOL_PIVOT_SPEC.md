@@ -30,3 +30,13 @@ decision; first prove forecast skill above the free baseline.
 
 ## Out of scope v1
 Strategy layer, benchmark-app vol scoring, options access, order-book data.
+
+## Persistence baseline MEASURED (2026-07-09) — bar revised
+15-min RV (309,082 windows): autocorr 0.349, persistence R2 = -0.305 (NEGATIVE — spike-dominated
+MSE makes last-value worse than the mean), **Spearman rank corr 0.789**.
+=> The primary bar is RANK skill, not level-MSE/pinball: model final-step-RV **Spearman must beat
+0.789**. Level-R2/pinball are spike-dominated and misleading, kept only as secondary/calibration.
+Value-add even at equal rank: persistence gives a POINT; the model gives CALIBRATED q10/q90 vol
+intervals (the actual product for vol-targeting/breakout sizing) — so also require q90 coverage in
+[0.85,0.95] + calibration 0.75-0.85. Scale caveat: variance targets ~1e-5 (tiny); watch first fold
+for a scale/训练 pathology (non-finite-loss guard will raise if it blows up).
