@@ -66,7 +66,7 @@ def main() -> int:
         meta = read_checkpoint_meta(w)
         if meta.get("target_semantics") != PREDICTOR.TARGET_SEMANTICS:
             continue  # only this branch's recipe (vol run is the sole cumulative_sqret run)
-        lookback = int(meta["lookback"])  # type: ignore[arg-type]
+        lookback = int(meta["lookback"])  # type: ignore[call-overload]
         model = PatchTST(lookback=lookback)
         model.load_state_dict(torch.load(w, weights_only=True)["state_dict"])
         model.to(device)

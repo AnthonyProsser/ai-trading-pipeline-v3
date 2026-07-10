@@ -114,7 +114,7 @@ class PredictorConfig:
     # SQUARED log-return path (realized-variance path) from the forecast origin, per
     # horizon step. Embedded in every checkpoint; deploy refuses a checkpoint trained
     # under a different convention.
-    TARGET_SEMANTICS: str = "cumulative_sqret"
+    TARGET_SEMANTICS: str = "cumulative_absret"
 
     # Rollout geometry enforcement (predictor-contract.md §"Geometry enforcement")
     # H >= max(O,C) and L <= min(O,C) per emitted step and quantile; a violating

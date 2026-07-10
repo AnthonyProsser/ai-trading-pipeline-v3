@@ -161,7 +161,7 @@ def test_pinball_is_zero_when_pred_equals_cumulative_target() -> None:
 
     gen = torch.Generator().manual_seed(1)
     target = torch.randn((4, PREDICTOR.HORIZON, PREDICTOR.NUM_OUTPUT_DIMS), generator=gen) * 0.01
-    cum = torch.cumsum(target * target, dim=1)
+    cum = torch.cumsum(torch.abs(target), dim=1)
     pred = cum.unsqueeze(-1).expand(-1, -1, -1, len(PREDICTOR.QUANTILES)).contiguous()
 
     comp = predictor_loss(pred, target)

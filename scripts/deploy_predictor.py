@@ -87,7 +87,7 @@ def gather_predictions(
             # Model output = cumulative REALIZED-VARIANCE path (TARGET_SEMANTICS); square
             # then convert the raw per-step targets to the same space so the gates
             # compare like with like (vol pivot, 2026-07-09).
-            targets.append(y_batch.mul(y_batch).cumsum(dim=1))
+            targets.append(y_batch.abs().cumsum(dim=1))
     return torch.cat(preds), torch.cat(targets)
 
 

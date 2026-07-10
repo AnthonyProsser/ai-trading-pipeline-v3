@@ -155,7 +155,7 @@ def predictor_loss(
     (meaningless for a variance prediction) and is skipped entirely when
     ``lambda_ == 0.0`` (the default) so no compute/grad is wasted on it.
     """
-    target_cum = torch.cumsum(target * target, dim=1)
+    target_cum = torch.cumsum(torch.abs(target), dim=1)
     pinball = pinball_loss(pred, target_cum, quantiles)
     direction = (
         direction_penalty(pred, target_cum, fee_threshold)

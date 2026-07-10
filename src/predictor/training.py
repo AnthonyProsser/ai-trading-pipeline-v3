@@ -467,7 +467,7 @@ def _collect_predictions(
             # Both sides -> CPU explicitly: the _WindowLoader keeps y device-resident, so
             # leaving it in place would compare a CPU pred against a CUDA target.
             preds.append(enforce_geometry(model(x.to(device))).cpu())
-            targets.append(y.mul(y).cumsum(dim=1).cpu())
+            targets.append(y.abs().cumsum(dim=1).cpu())
     if not preds:
         raise RuntimeError("loader yielded no batches — cannot evaluate predictions")
     return torch.cat(preds), torch.cat(targets)

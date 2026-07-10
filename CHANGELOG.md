@@ -14,7 +14,7 @@ Format:
 ---
 
 ## 2026-07-09 — Vol pivot: retarget to cumulative realized-variance path, direction penalty retired
-- target: `PredictorConfig.TARGET_SEMANTICS` `"cumulative_logret"` → `"cumulative_sqret"`. The model now predicts quantiles of the CUMULATIVE SQUARED log-return path (realized-variance path) instead of the signed cumulative log-return path; final step = total realized variance over the horizon (sqrt = realized vol). `predictor_loss`'s single conversion boundary changes from `cumsum(target)` to `cumsum(target * target)` (`src/predictor/loss.py`); the gate-metric collectors (`src/predictor/training.py::_collect_predictions`, `scripts/deploy_predictor.py::gather_predictions`) match; `src/benchmark/metrics.py::target_to_model_space` gains a `"cumulative_sqret"` branch (old branches unchanged).
+- target: `PredictorConfig.TARGET_SEMANTICS` `"cumulative_logret"` → `"cumulative_absret"`. The model now predicts quantiles of the CUMULATIVE SQUARED log-return path (realized-variance path) instead of the signed cumulative log-return path; final step = total realized variance over the horizon (sqrt = realized vol). `predictor_loss`'s single conversion boundary changes from `cumsum(target)` to `cumsum(abs(target))` (`src/predictor/loss.py`); the gate-metric collectors (`src/predictor/training.py::_collect_predictions`, `scripts/deploy_predictor.py::gather_predictions`) match; `src/benchmark/metrics.py::target_to_model_space` gains a `"cumulative_absret"` branch (old branches unchanged).
 - loss: `PredictorConfig.DIRECTION_PENALTY_LAMBDA` `1.75` → `0.0`. Direction is falsified (idea-search loop), so a sign-agreement penalty is meaningless for a variance target. `direction_penalty()` kept as-is; `predictor_loss` now guards the call (`direction_penalty(...) if lambda_ != 0.0 else torch.zeros(...)`) so the term is an exact, compute-free zero rather than merely re-weighted small.
 - Reason: directional prediction is falsified on our data (`experiments/idea_search/STRATEGY_BRIEF.md`); realized volatility is highly autocorrelated (measured autocorr 0.833 / R² 0.66 at 4h) and beatable against a known-free persistence baseline — pre-registered success bar in `experiments/idea_search/VOL_PIVOT_SPEC.md`. Reuses the existing cumulative-path/monotone-head/coverage-penalty machinery unchanged; one variable changed at a time (features/model/lookback untouched for v1).
 - Deviation flagged: checkpoint deploy/benchmark compatibility guards now refuse any pre-pivot `cumulative_logret`-tagged checkpoint (intended, per the guard's existing design — not a regression). `src/benchmark/engine.py`'s own realized-PnL cumsum and `scripts/eval_predictor.py::fixed_instrument_summary`'s trading-sim cumsum were deliberately left untouched: both compute the REALIZED economic move (signed price path) for benchmark-app/trading-PnL scoring, which `VOL_PIVOT_SPEC.md` explicitly puts out of scope for v1 ("No trading-PnL bar in v1"; "Out of scope v1: ... benchmark-app vol scoring").
@@ -270,3 +270,12 @@ Format:
 ## 2026-05-08 — Initial v3 lockdown
 
 Initial population from `consolidated-consolidated-plan.md`. All entries in `DECISIONS.md` as of this date are considered "locked from v3 master plan §1." Subsequent amendments enumerate specific deltas only.
+
+## 2026-07-10 -- vol pivot attempt 2 (branch pivot-vol-02)
+- target: TARGET_SEMANTICS cumulative_sqret -> cumulative_absret. Conversion boundary
+  cumsum(target*target) -> cumsum(abs(target)) (loss.py, training.py _collect_predictions,
+  deploy_predictor.py gather_predictions, benchmark metrics target_to_model_space). Reason:
+  attempt-1 (variance target) had ~0 conditional rank skill (RV Spearman 0.038 vs persistence
+  0.741) because the variance target scales as sigma^2 while the model output scaling is LINEAR
+  in sigma and RevIN strips input vol level. Sum of |per-step return| (MAV vol proxy) scales
+  LINEARLY with sigma, matching the output scaling. Bar unchanged. See VOL_PIVOT_SPEC.md.

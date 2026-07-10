@@ -46,8 +46,8 @@ def target_to_model_space(target: torch.Tensor, semantics: str) -> torch.Tensor:
     """
     if semantics == "cumulative_logret":
         return torch.cumsum(target, dim=1)
-    if semantics == "cumulative_sqret":
-        return torch.cumsum(target * target, dim=1)
+    if semantics == "cumulative_absret":
+        return torch.cumsum(torch.abs(target), dim=1)
     return target
 
 

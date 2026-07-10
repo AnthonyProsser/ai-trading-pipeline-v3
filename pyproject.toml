@@ -55,6 +55,10 @@ select = ["E", "F", "I", "UP", "B", "SIM", "DTZ"]
 "scripts/train_predictor.py" = ["E402", "I001"]
 "scripts/deploy_predictor.py" = ["E402", "I001"]
 "scripts/eval_predictor.py" = ["E402", "I001"]
+# Idea-search loop tooling (not phase deliverables): E501/E702 relaxed for terse analysis scripts.
+"scripts/run_full_training.py" = ["E402", "I001", "E501", "E702"]
+"scripts/benchmark_finished.py" = ["E402", "I001", "E501", "E702"]
+"scripts/eval_vol.py" = ["E402", "I001", "E501", "E702"]
 
 [dependency-groups]
 dev = [

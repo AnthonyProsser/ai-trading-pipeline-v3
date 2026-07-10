@@ -167,8 +167,8 @@ def test_predictor_loss_includes_weighted_coverage_component() -> None:
 # direction is falsified, meaningless for a variance target.
 
 
-def test_target_semantics_is_cumulative_sqret() -> None:
-    assert PREDICTOR.TARGET_SEMANTICS == "cumulative_sqret"
+def test_target_semantics_is_cumulative_absret() -> None:
+    assert PREDICTOR.TARGET_SEMANTICS == "cumulative_absret"
 
 
 def test_direction_penalty_lambda_retired_to_zero() -> None:
@@ -181,7 +181,7 @@ def test_predictor_loss_target_conversion_is_squared_then_cumsum() -> None:
     # quantile must have exactly zero pinball loss.
     gen = torch.Generator().manual_seed(2)
     target = torch.randn((4, _H, _D), generator=gen) * 0.01
-    target_sqcum = (target * target).cumsum(dim=1)
+    target_sqcum = target.abs().cumsum(dim=1)
     pred = target_sqcum.unsqueeze(-1).expand(-1, -1, -1, _Q).contiguous()
     comp = predictor_loss(pred, target, lambda_=0.0)
     assert comp.pinball.item() == pytest.approx(0.0, abs=1e-9)
