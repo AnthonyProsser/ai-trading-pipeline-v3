@@ -55,6 +55,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "DTZ"]
 "scripts/train_predictor.py" = ["E402", "I001"]
 "scripts/deploy_predictor.py" = ["E402", "I001"]
 "scripts/eval_predictor.py" = ["E402", "I001"]
+"scripts/run_daily_experiment.py" = ["E402", "I001"]
 
 [dependency-groups]
 dev = [

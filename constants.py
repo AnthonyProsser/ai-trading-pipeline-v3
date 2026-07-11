@@ -32,14 +32,17 @@ class DataConfig:
     KRAKEN_HISTORY_OUT_DIR: str = "data/raw"
     KRAKEN_HISTORY_CACHE_DIR: str = "data/.cache"
 
-    # Walk-forward splits (candles)
-    WALK_FORWARD_TRAIN: int = 150_000
-    WALK_FORWARD_VAL: int = 50_000
-    WALK_FORWARD_TEST: int = 10_000
-    WALK_FORWARD_STRIDE: int = 50_000  # = VAL block; non-overlapping validation
+    # Walk-forward splits (candles). idea-07-daily-hourly (2026-07-11): this branch
+    # operates entirely in HOURLY resolution — these are hourly-candle counts, not the
+    # 1-minute production values (150_000/50_000/10_000/50_000/120_960).
+    WALK_FORWARD_TRAIN: int = 8_760  # 1 year of hourly candles
+    WALK_FORWARD_VAL: int = 2_160  # 90 days
+    WALK_FORWARD_TEST: int = 1_440  # 60 days
+    WALK_FORWARD_STRIDE: int = 2_160  # = VAL block; non-overlapping validation
 
-    # Locked test set: 84 days × 1440 = 12 × 1-week non-overlapping windows
-    LOCKED_TEST_CANDLES: int = 120_960
+    # Locked test set: 180 days of hourly candles. idea-07-daily-hourly hourly value
+    # (1-minute production value: 120_960).
+    LOCKED_TEST_CANDLES: int = 4_320
 
     # Search dev-slice (DECISIONS.md 'search_dev_slice'): the most recent
     # SEARCH_SLICE_TRAIN + SEARCH_SLICE_VAL candles immediately before HISTORICAL_START.
@@ -66,7 +69,9 @@ class DataConfig:
     )
     # vol_change is +/-inf when current/prior volume is 0; degenerate value filled neutral.
     VOL_CHANGE_DEGENERATE_FILL: float = 0.0
-    LOOKBACK: int = 1_440  # SWEEP [240, 720, 1440] before long training run
+    # idea-07-daily-hourly (2026-07-11): hourly-experiment value (30 days of hourly
+    # candles; PATCH_SIZE 16 divides 720 = 45 tokens). 1-minute production value: 1_440.
+    LOOKBACK: int = 720
     # Floor for log(volume_t / volume_{t-1}). When volume_t = 0 or the ratio is
     # tiny, the raw log goes to -inf; clip to this finite floor so the scaler
     # has a stable input distribution. e^-10 ≈ 4.5e-5× — well below any
@@ -82,7 +87,9 @@ class DataConfig:
 # ============================================================
 @dataclass(frozen=True)
 class PredictorConfig:
-    HORIZON: int = 15  # direct multi-step; autoregression banned
+    # idea-07-daily-hourly (2026-07-11): hourly-experiment value (1 day of hourly
+    # candles). 1-minute production value: 15.
+    HORIZON: int = 24  # direct multi-step; autoregression banned
     PATCH_SIZE: int = 16  # PatchTST: 1440 / 16 = 90 tokens
 
     # PatchTST encoder architecture (predictor-training.md §"Architecture").
